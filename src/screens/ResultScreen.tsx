@@ -42,7 +42,9 @@ export function ResultScreen({route, navigation}: Props) {
   }, [ring]);
   const ringStyle = useAnimatedStyle(() => ({opacity: 0.45 * (1 - ring.value), transform: [{scale: 1 + ring.value * 0.7}]}));
 
-  const title = result.info
+  const title = result.title
+    ? result.title
+    : result.info
     ? 'File details'
     : result.text
       ? 'Text extracted'

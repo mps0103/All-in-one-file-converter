@@ -36,6 +36,8 @@ export type RunContext = {
 
 export type RunResult = {
   files: OutFile[];
+  /** Heading for the result screen, when "<tool> done!" would not be true. */
+  title?: string;
   note?: string;
   /** For the "x MB → y MB, n% smaller" card. */
   beforeBytes?: number;

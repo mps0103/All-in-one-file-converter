@@ -527,6 +527,7 @@ class ArchiveModule(private val ctx: ReactApplicationContext) : ReactContextBase
         val subPath = relative.substringBeforeLast('/', "")
         val uri: Uri
         val shown: String
+        val savedName: String
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val relPath = listOf(Environment.DIRECTORY_DOWNLOADS, folder, subPath)
@@ -544,25 +545,73 @@ class ArchiveModule(private val ctx: ReactApplicationContext) : ReactContextBase
             values.clear()
             values.put(MediaStore.Downloads.IS_PENDING, 0)
             resolver.update(uri, values, null, null)
-            shown = relPath + file.name
+            // Only now: while pending the entry still answers with the asked-for name,
+            // and MediaStore settles a clash when it stops being pending.
+            savedName = settleName(uri, file.name)
+            shown = relPath + savedName
         } else {
             val dir = File(
                 Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
                 listOf(folder, subPath).filter { it.isNotBlank() }.joinToString("/"),
             )
             dir.mkdirs()
-            val out = File(dir, file.name)
-            file.copyTo(out, overwrite = true)
+            // Never over an earlier file: the first free "name (n).ext", as Android 10+ does.
+            var out = File(dir, file.name)
+            var n = 1
+            while (out.exists() && n < 1000) out = File(dir, numbered(file.name, n++))
+            file.copyTo(out)
             uri = androidx.core.content.FileProvider.getUriForFile(ctx, ctx.packageName + ".provider", out)
             shown = out.absolutePath
+            savedName = out.name
         }
 
         return Arguments.createMap().apply {
             putString("uri", uri.toString())
             putString("path", shown)
-            putString("name", file.name)
+            putString("name", savedName)
             putString("mime", mime)
         }
+    }
+
+    /**
+     * The name a new Downloads entry really got, made tidy.
+     *
+     * MediaStore renames an entry whose name is taken, and it treats only the last
+     * dot as the extension: a second "archive.tar.gz" became "archive.tar (1).gz",
+     * and the result screen still said "archive.tar.gz". Other apps' files are not
+     * visible from here, so a free name cannot be worked out in advance. Instead,
+     * when MediaStore has renamed the entry, it is renamed again to "archive (n).tar.gz",
+     * trying the next n until MediaStore keeps the name as given.
+     */
+    private fun settleName(uri: Uri, wanted: String): String {
+        val resolver = ctx.contentResolver
+        fun current(): String? =
+            resolver.query(uri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                if (c.moveToFirst()) c.getString(0) else null
+            }
+        var saved = current() ?: wanted
+        if (saved == wanted) return saved
+        for (n in 1..99) {
+            val candidate = numbered(wanted, n)
+            try {
+                resolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.DISPLAY_NAME, candidate) }, null, null)
+            } catch (_: Exception) {
+                continue
+            }
+            saved = current() ?: saved
+            if (saved == candidate) break
+        }
+        return saved
+    }
+
+    /** "archive.tar.gz", 1 -> "archive (1).tar.gz"; "notes.txt", 2 -> "notes (2).txt". */
+    private fun numbered(name: String, n: Int): String {
+        val lower = name.lowercase()
+        val ext = listOf(".tar.gz", ".tar.bz2", ".tar.xz").firstOrNull { lower.endsWith(it) && name.length > it.length }
+            ?.let { name.takeLast(it.length) }
+            ?: name.lastIndexOf('.').takeIf { it > 0 }?.let { name.substring(it) }
+            ?: ""
+        return "${name.dropLast(ext.length)} ($n)$ext"
     }
 
     /**

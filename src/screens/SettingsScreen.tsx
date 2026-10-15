@@ -5,7 +5,7 @@ import {useFocusEffect, useNavigation} from '@react-navigation/native';
 
 import {Icon, type IconName} from '@/components/Icon';
 import {PressableScale, enter} from '@/components/motion';
-import {AppDialog, Card, GradientFill, Screen, ScreenHeader, SectionHeader, Segmented, ToggleRow} from '@/components/ui';
+import {Card, GradientFill, InfoSheet, Screen, ScreenHeader, SectionHeader, Segmented, ToggleRow} from '@/components/ui';
 import {useApp} from '@/hooks/AppState';
 import {IS_DEBUG_BUILD} from '@/native/FileBridge';
 import {Workbench} from '@/native/Tools';
@@ -24,6 +24,31 @@ const LAME_URL = 'https://lame.sourceforge.io';
 const LAME_NOTICE =
   'MP3 encoding uses LAME 3.100, © the LAME project, licensed under the GNU Library General Public License (LGPL) version 2. ' +
   'It is included unmodified as a separate library (libmp3lame.so), and its source code is available from lame.sourceforge.io.';
+
+/**
+ * Every open-source component the app ships, each licence read from the package
+ * itself (package.json for JS, the Maven POM or jar manifest for Android).
+ */
+const LICENCES: {name: string; licence: string; url: string}[] = [
+  {name: 'LAME 3.100', licence: 'LGPL 2', url: LAME_URL},
+  {name: 'PDFBox-Android 2.0.27', licence: 'Apache 2.0', url: 'https://github.com/TomRoush/PdfBox-Android'},
+  {name: 'zip4j 2.11.5', licence: 'Apache 2.0', url: 'https://github.com/srikanth-lingala/zip4j'},
+  {name: 'Apache Commons Compress 1.27.1', licence: 'Apache 2.0', url: 'https://commons.apache.org/proper/commons-compress/'},
+  {name: 'XZ for Java 1.10', licence: '0BSD', url: 'https://tukaani.org/xz/java.html'},
+  {name: 'junrar 7.5.5', licence: 'UnRAR licence', url: 'https://github.com/junrar/junrar'},
+  {name: 'pdf-lib 1.17.1', licence: 'MIT', url: 'https://pdf-lib.js.org'},
+  {name: 'mammoth 1.9.0', licence: 'BSD-2-Clause', url: 'https://github.com/mwilliamson/mammoth.js'},
+  {name: 'SheetJS xlsx 0.18.5', licence: 'Apache 2.0', url: 'https://sheetjs.com'},
+  {name: 'docx 9.1.1', licence: 'MIT', url: 'https://docx.js.org'},
+  {name: 'JSZip 3.10.1', licence: 'MIT or GPLv3', url: 'https://stuk.github.io/jszip/'},
+  {name: 'React Native 0.77', licence: 'MIT', url: 'https://reactnative.dev'},
+  {name: 'React Native Reanimated 3.19', licence: 'MIT', url: 'https://docs.swmansion.com/react-native-reanimated'},
+  {name: 'react-native-svg 15.13', licence: 'MIT', url: 'https://github.com/software-mansion/react-native-svg'},
+  {name: 'react-native-webview 13.16', licence: 'MIT', url: 'https://github.com/react-native-webview/react-native-webview'},
+  {name: 'react-native-document-scanner-plugin 2.0.4', licence: 'MIT', url: 'https://github.com/websitebeaver/react-native-document-scanner-plugin'},
+  {name: 'AndroidX Media3 1.5.1', licence: 'Apache 2.0', url: 'https://developer.android.com/media/media3'},
+  {name: 'Google ML Kit', licence: 'ML Kit Terms', url: 'https://developers.google.com/ml-kit/terms'},
+];
 
 export function SettingsScreen() {
   const t = useTheme();
@@ -119,17 +144,15 @@ export function SettingsScreen() {
         <Text style={[type.caption, {color: t.textDim, textAlign: 'center', marginTop: spacing.xl}]}>All-in-One File Converter · by MPS{'\n'}Every tool runs on your phone. Nothing is uploaded.</Text>
       </ScrollView>
 
-      <AppDialog
-        visible={about}
-        onClose={() => setAbout(false)}
-        icon="info"
-        title={`Version ${APP_VERSION}`}
-        message={LAME_NOTICE}
-        actions={[
-          {label: 'LAME source', onPress: () => Linking.openURL(LAME_URL)},
-          {label: 'Close', tone: 'primary' as const, onPress: () => setAbout(false)},
-        ]}
-      />
+      <InfoSheet visible={about} onClose={() => setAbout(false)} title={`About · Version ${APP_VERSION}`}>
+        <Text style={[type.body, {color: t.textMuted, lineHeight: 21}]}>{LAME_NOTICE}</Text>
+        <SectionHeader title="Open-source licences" />
+        <Card style={styles.group}>
+          {LICENCES.map((l, i) => (
+            <Row key={l.name} icon="policy" label={l.name} value={l.licence} onPress={() => Linking.openURL(l.url)} last={i === LICENCES.length - 1} />
+          ))}
+        </Card>
+      </InfoSheet>
     </Screen>
   );
 }

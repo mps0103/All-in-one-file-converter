@@ -1,6 +1,6 @@
 import type {PickedFile} from '@/native/FileBridge';
 import {ImageTools, MediaTools, onMediaProgress, type AudioOptions, type MediaProbe, type VideoOptions} from '@/native/Tools';
-import {base, ext, named, publish, sum, temp} from './helpers';
+import {base, ext, humanBytes, named, publish, sum, temp} from './helpers';
 import type {Opts, RunResult} from './types';
 
 type Progress = (p: number, l: string) => void;
@@ -24,6 +24,9 @@ const sourceBitrate = (p: MediaProbe | undefined, f: PickedFile) => {
 
 // --------------------------------------------------------------------- video
 
+/** Lowest video rate a compress asks for, unless the source itself is lower. */
+const MIN_VIDEO_BPS = 100_000;
+
 export async function video(files: PickedFile[], o: Opts, probe: MediaProbe | undefined, suffix: string, progress: Progress): Promise<RunResult> {
   const dest = await temp(named(files[0].name, suffix, 'mp4'));
   const opts: VideoOptions = {outPath: dest};
@@ -40,7 +43,9 @@ export async function video(files: PickedFile[], o: Opts, probe: MediaProbe | un
     const src = sourceBitrate(probe, files[0]);
     const plan: Record<string, [number, number]> = {light: [0.7, 0], balanced: [0.45, 1080], strong: [0.25, 720]};
     const [factor, cap] = plan[o.level] ?? plan.balanced;
-    opts.videoBitrate = Math.max(500_000, Math.round(src * factor));
+    // Never above ~90% of the source. A fixed 500 kbps floor used to sit above the
+    // rate of small or simple videos, so "compressing" them made them bigger.
+    opts.videoBitrate = Math.round(Math.min(src * 0.9, Math.max(MIN_VIDEO_BPS, src * factor)));
     const shortSide = probe ? Math.min(probe.width, probe.height) : 0;
     if (cap && shortSide > cap) opts.maxHeight = cap;
   }
@@ -61,9 +66,22 @@ export async function video(files: PickedFile[], o: Opts, probe: MediaProbe | un
   }
 
   const res = await track(progress, 'Processing video', () => MediaTools.transformVideo(files.map(f => f.uri), opts));
+
+  // Compressing can still come out no smaller — the sound is re-encoded too, and a
+  // video already near its floor has nothing left to give. Then the original stays
+  // the best copy: nothing is saved and no free conversion is used.
+  const before = sum(files);
+  if (o.level && files.length === 1 && before > 0 && res.size >= before) {
+    return {
+      files: [],
+      title: 'Already well compressed',
+      note: `The original is ${humanBytes(before)}, and no smaller copy could be made, so it was kept as it is and nothing new was saved.`,
+    };
+  }
+
   progress(98, 'Saving');
   const out = await publish(res.path, files.length > 1 ? `${base(files[0].name)}-merged.mp4` : named(files[0].name, suffix, 'mp4'));
-  return {files: [out], beforeBytes: sum(files), afterBytes: res.size};
+  return {files: [out], beforeBytes: before, afterBytes: res.size};
 }
 
 // --------------------------------------------------------------------- audio
