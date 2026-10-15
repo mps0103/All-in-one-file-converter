@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Themed-icon silhouette: a folder with the two-arrow convert loop. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#000000"
+        android:pathData="M30,38h16l5,5h27a4,4 0 0 1 4,4v24a4,4 0 0 1 -4,4h-48a4,4 0 0 1 -4,-4v-29a4,4 0 0 1 4,-4z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,48a11,11 0 0 1 10.4,7.4h3.6l-5,6 -5,-6h3.1a7,7 0 0 0 -13.2,1.6h-4a11,11 0 0 1 10.1,-9zM43,61l5,-6 5,6h-3.1a7,7 0 0 0 13.2,-1.6h4a11,11 0 0 1 -20.5,1.6z" />
+</vector>

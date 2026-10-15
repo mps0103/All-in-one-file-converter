@@ -1,0 +1,9 @@
+<resources>
+    <!-- Android 12+ draws its own splash from the icon; point it at our art and colour. -->
+    <style name="SplashTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/splash_bg</item>
+        <item name="android:windowSplashScreenBackground">@color/splash_bg</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher_art</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/splash_bg</item>
+    </style>
+</resources>

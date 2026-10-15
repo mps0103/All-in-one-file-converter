@@ -1,0 +1,168 @@
+apply plugin: "com.android.application"
+apply plugin: "org.jetbrains.kotlin.android"
+apply plugin: "com.facebook.react"
+
+react {
+    autolinkLibrariesWithApp()
+}
+
+def enableProguardInReleaseBuilds = true
+def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
+
+/**
+ * Release signing reads android/keystore.properties, which is never committed.
+ * Debug builds fall back to the standard debug key.
+ */
+def keystorePropertiesFile = rootProject.file("keystore.properties")
+def keystoreProperties = new Properties()
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
+android {
+    ndkVersion rootProject.ext.ndkVersion
+    buildToolsVersion rootProject.ext.buildToolsVersion
+    compileSdk rootProject.ext.compileSdkVersion
+
+    namespace "com.mps.allinone"
+
+    defaultConfig {
+        applicationId "com.mps.allinone"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+
+        // Bump both together at the end of a batch of changes, before every Play upload.
+        versionCode 1
+        versionName "1.0.0"
+
+        multiDexEnabled true
+        resourceConfigurations += ["en"]
+    }
+
+    signingConfigs {
+        debug {
+            storeFile file('debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+        release {
+            if (keystorePropertiesFile.exists()) {
+                storeFile file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
+        release {
+            signingConfig keystorePropertiesFile.exists()
+                    ? signingConfigs.release
+                    : signingConfigs.debug
+            minifyEnabled enableProguardInReleaseBuilds
+            shrinkResources enableProguardInReleaseBuilds
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+        }
+    }
+
+    packagingOptions {
+        resources {
+            excludes += [
+                    'META-INF/DEPENDENCIES',
+                    'META-INF/LICENSE*',
+                    'META-INF/NOTICE*',
+                    'META-INF/INDEX.LIST',
+            ]
+        }
+    }
+
+    // libmp3lame.so: the LAME MP3 encoder, built from source with the NDK above.
+    externalNativeBuild {
+        cmake {
+            path "src/main/cpp/CMakeLists.txt"
+        }
+    }
+
+    compileOptions {
+        // commons-compress and junrar call newer java.* APIs than API 24 ships with.
+        coreLibraryDesugaringEnabled true
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
+    bundle {
+        language { enableSplit = false }
+    }
+}
+
+/**
+ * A debug bundle is sometimes written into src/main/assets so the debug apk runs
+ * without Metro. A release build generates its own bundle under the same name, and
+ * the two are merged: the hand-written one can win and ship.
+ *
+ * That bundle is built with --dev true, so __DEV__ would be true in production —
+ * the "debug build only" testing panel would appear on real devices and the
+ * premium override with it. Fail the build rather than let it through quietly.
+ */
+tasks.whenTaskAdded { task ->
+    if (task.name == "mergeReleaseAssets") {
+        task.doFirst {
+            def devBundle = file("src/main/assets/index.android.bundle")
+            if (devBundle.exists()) {
+                throw new GradleException(
+                        "Delete android/app/src/main/assets/index.android.bundle before building a " +
+                        "release. It is the --dev bundle used for offline debug testing, and shipping " +
+                        "it would leave __DEV__ true in production, exposing the testing controls.")
+            }
+        }
+    }
+}
+
+dependencies {
+    implementation("com.facebook.react:react-android")
+    implementation "androidx.core:core-ktx:1.13.1"
+    // enableEdgeToEdge(), which sets transparent system bars the same way on every
+    // API level this app supports.
+    implementation "androidx.activity:activity-ktx:1.9.3"
+    implementation "androidx.multidex:multidex:2.0.1"
+
+    // Google Play billing, talked to directly by BillingModule.kt. Play requires 8.x.
+    implementation "com.android.billingclient:billing-ktx:8.0.0"
+    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.3"
+
+    // Offline PDF text extraction. Nothing here touches the network.
+    implementation "com.tom-roush:pdfbox-android:2.0.27.0"
+
+    // Archive decoders, all pure JVM so extraction works with no connection.
+    implementation "net.lingala.zip4j:zip4j:2.11.5"              // ZIP, incl. ZipCrypto and AES
+    implementation "org.apache.commons:commons-compress:1.27.1"  // 7z, tar, gz, bz2, xz
+    implementation "org.tukaani:xz:1.10"                         // xz support for the above
+    implementation "com.github.junrar:junrar:7.5.5"              // RAR4
+
+    // Audio and video, on the phone's own hardware codecs. No network involved.
+    implementation "androidx.media3:media3-transformer:1.5.1"
+    implementation "androidx.media3:media3-effect:1.5.1"
+    implementation "androidx.media3:media3-common:1.5.1"
+    implementation "androidx.annotation:annotation-experimental:1.4.1"
+
+    // Image orientation for photos on Android 8 and older.
+    implementation "androidx.exifinterface:exifinterface:1.3.7"
+
+    // On-device text recognition (bundled model, works offline).
+    implementation "com.google.mlkit:text-recognition:16.0.1"
+
+    if (hermesEnabled.toBoolean()) {
+        implementation("com.facebook.react:hermes-android")
+    } else {
+        implementation jscFlavor
+    }
+}

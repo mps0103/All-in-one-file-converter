@@ -1,0 +1,7 @@
+<resources>
+    <!-- Launch colours match the JS splash artwork edges, so there is no flash. -->
+    <color name="splash_bg">#EAF3FD</color>
+    <color name="canvas">#F5F6F9</color>
+    <!-- Behind the adaptive icon foreground, sampled from the icon artwork edge. -->
+    <color name="icon_bg">#001340</color>
+</resources>

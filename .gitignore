@@ -1,0 +1,41 @@
+node_modules/
+android/app/build/
+android/build/
+android/.gradle/
+android/local.properties
+android/app/*.keystore
+*.jks
+.env
+npm-debug.log
+yarn-error.log
+.DS_Store
+
+# Build output from `react-native bundle`, written in so the debug apk runs
+# without Metro. Regenerated on demand and 13MB, so it is not source.
+android/app/src/main/assets/index.android.bundle
+
+# Images the bundler copies out of node_modules when --assets-dest is used.
+android/app/src/main/res/drawable-*/node_modules_*
+
+# The debug-only bundle and its images, so the debug apk runs without Metro.
+# Regenerated with `npx react-native bundle`, so not source.
+android/app/src/debug/assets/
+android/app/src/debug/res/
+
+# CMake build cache for libmp3lame.
+android/app/.cxx/
+
+# Files set aside for deletion.
+_to_delete/
+
+# Kotlin compiler scratch output.
+android/.kotlin/
+
+# Real signing passwords. Only keystore.properties.example is committed.
+android/keystore.properties
+android/keystores/
+
+# Built release bundles — 37 MB each, rebuildable, never in git
+release/
+*.aab
+*.apk

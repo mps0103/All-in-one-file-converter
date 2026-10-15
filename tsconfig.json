@@ -1,0 +1,21 @@
+{
+  "extends": "@react-native/typescript-config/tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": { "@/*": ["src/*"] },
+    "strict": true,
+    "jsx": "react-jsx",
+    // The base config asks for ["react-native", "jest"], but this project has no
+    // tests and so no @types/jest. That matters more than it looks: an entry in
+    // "types" that cannot be resolved makes tsc stop before it checks a single
+    // source file, so the project silently goes unchecked while appearing to pass.
+    //
+    // Empty is deliberate rather than ["react-native"]: react-native ships its own
+    // types instead of living in @types, so resolving it here depends on the
+    // TypeScript version and breaks in editors using a different one. Nothing is
+    // lost — every global the app uses, __DEV__ included, arrives with the
+    // `react-native` imports themselves.
+    "types": []
+  },
+  "include": ["src", "index.js"]
+}
