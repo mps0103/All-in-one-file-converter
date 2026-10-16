@@ -87,6 +87,7 @@ type ImageNative = {
 
 type MediaNative = {
   probe(uri: string): Promise<MediaProbe>;
+  /** A preview frame as a JPEG in the cache; resolves to its file uri. */
   thumbnail(uri: string, timeMs: number, width: number): Promise<string>;
   transformVideo(uris: string[], opts: VideoOptions): Promise<{path: string; size: number; durationMs: number}>;
   transformAudio(uris: string[], opts: AudioOptions): Promise<{path: string; size: number; durationMs: number}>;

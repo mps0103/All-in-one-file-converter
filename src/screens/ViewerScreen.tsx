@@ -1,5 +1,18 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
-import {ActivityIndicator, Image, Modal, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions} from 'react-native';
+import {
+  ActivityIndicator,
+  Image,
+  Modal,
+  PixelRatio,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+  useWindowDimensions,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+} from 'react-native';
 import {WebView} from 'react-native-webview';
 import {Gesture, GestureDetector, GestureHandlerRootView} from 'react-native-gesture-handler';
 import Animated, {FadeIn, useAnimatedStyle, useSharedValue, withTiming} from 'react-native-reanimated';
@@ -10,6 +23,7 @@ import {PressableScale, enter} from '@/components/motion';
 import {Card, Field, GhostButton, GradientButton, GradientTile, Screen, ScreenHeader, SkeletonBlock} from '@/components/ui';
 import {buildPreview, previewKindFor, type Preview} from '@/convert/preview';
 import {useApp} from '@/hooks/AppState';
+import {useInBackground} from '@/hooks/useInBackground';
 import {FileBridge, isCancelled, isPasswordError, type PickedFile} from '@/native/FileBridge';
 import {humanBytes} from '@/tools/helpers';
 import {radius, spacing, tints, type, useTheme} from '@/theme';
@@ -92,31 +106,55 @@ function Zoomable({width, height, children}: {width: number; height: number; chi
   );
 }
 
-/** One page of a PDF, drawn natively and only once it is needed. */
-function PdfPage({uri, index, width, password}: {uri: string; index: number; width: number; password: string}) {
+/** Pages of a PDF with a picture at any one time: those on screen and a few either side. */
+const PAGE_WINDOW = 8;
+/** A page only asks to be drawn once it has stayed near the screen this long, so a fling past it costs nothing. */
+const PAGE_SETTLE_MS = 120;
+
+/**
+ * Pixel widths to draw a page at. A page in the list is drawn at twice its width
+ * in dp but never wider than the screen in real pixels; the page opened to zoom at
+ * three times, but never above two screen widths.
+ */
+const listPagePixels = (width: number) => Math.round(Math.min(width * 2, width * PixelRatio.get()));
+const zoomPagePixels = (screenWidth: number) => Math.round(Math.min(screenWidth * 3, screenWidth * PixelRatio.get() * 2));
+
+/**
+ * One page of a PDF, drawn natively and only while it is near the screen. Off
+ * screen it keeps its place at its known height but holds no picture; the drawn
+ * page waits in the cache as a file and comes back from there.
+ */
+function PdfPage({uri, index, width, password, live}: {uri: string; index: number; width: number; password: string; live: boolean}) {
   const t = useTheme();
   const [src, setSrc] = useState<string | null>(null);
   const [ratio, setRatio] = useState(1.414);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
+    if (!live) {
+      setSrc(null);
+      return;
+    }
     let alive = true;
-    FileBridge.renderPdfPage(uri, index, Math.round(width * 2), password)
-      .then(page => {
-        if (!alive) return;
-        setSrc(`data:image/png;base64,${page.base64}`);
-        setRatio(page.height / page.width);
-      })
-      .catch(() => alive && setFailed(true));
+    const wait = setTimeout(() => {
+      FileBridge.renderPdfPage(uri, index, listPagePixels(width), password)
+        .then(page => {
+          if (!alive) return;
+          setSrc(page.uri);
+          setRatio(page.height / page.width);
+        })
+        .catch(() => alive && setFailed(true));
+    }, PAGE_SETTLE_MS);
     return () => {
       alive = false;
+      clearTimeout(wait);
     };
-  }, [uri, index, width, password]);
+  }, [live, uri, index, width, password]);
 
   if (failed || !src) {
     return (
       <View style={[styles.pageFallback, {width, height: width * ratio, backgroundColor: t.card, borderColor: t.border}]}>
-        {failed ? <Text style={[type.caption, {color: t.textMuted}]}>Page {index + 1} could not be drawn.</Text> : <ActivityIndicator color={t.textMuted} />}
+        {failed ? <Text style={[type.caption, {color: t.textMuted}]}>Page {index + 1} could not be drawn.</Text> : live ? <ActivityIndicator color={t.textMuted} /> : null}
       </View>
     );
   }
@@ -126,20 +164,20 @@ function PdfPage({uri, index, width, password}: {uri: string; index: number; wid
 /**
  * One page on its own, where it can be pinched about. A page in the list cannot:
  * it sits inside the screen's vertical scroll, and a pinch there is a fight
- * between the two about whose gesture it is. The page is drawn again at three
- * times the screen width so zooming in shows detail rather than a bigger blur.
+ * between the two about whose gesture it is. The page is drawn again larger
+ * (zoomPagePixels) so zooming in shows detail rather than a bigger blur.
  */
-function PageZoom({uri, index, pageCount, password, onClose}: {uri: string; index: number; pageCount: number; password: string; onClose: () => void}) {
+function PageZoom({uri, index, pageCount, password, hidden, onClose}: {uri: string; index: number; pageCount: number; password: string; hidden: boolean; onClose: () => void}) {
   const {width, height} = useWindowDimensions();
   const [src, setSrc] = useState<string | null>(null);
   const [ratio, setRatio] = useState(1.414);
 
   useEffect(() => {
     let alive = true;
-    FileBridge.renderPdfPage(uri, index, Math.round(width * 3), password)
+    FileBridge.renderPdfPage(uri, index, zoomPagePixels(width), password)
       .then(page => {
         if (!alive) return;
-        setSrc(`data:image/png;base64,${page.base64}`);
+        setSrc(page.uri);
         setRatio(page.height / page.width);
       })
       .catch(() => {});
@@ -152,7 +190,7 @@ function PageZoom({uri, index, pageCount, password, onClose}: {uri: string; inde
   return (
     <ZoomModal label={`Page ${index + 1} of ${pageCount}`} onClose={onClose}>
       <Zoomable width={shown.width} height={shown.height}>
-        {src ? <Image source={{uri: src}} style={shown} resizeMode="contain" /> : <ActivityIndicator color="#FFFFFF" />}
+        {src && !hidden ? <Image source={{uri: src}} style={shown} resizeMode="contain" /> : <ActivityIndicator color="#FFFFFF" />}
       </Zoomable>
     </ZoomModal>
   );
@@ -180,7 +218,7 @@ function ZoomModal({label, onClose, children}: {label: string; onClose: () => vo
 }
 
 /** A picture, fitted to the space and zoomable in place. */
-function ImageView({uri, onFail}: {uri: string; onFail: () => void}) {
+function ImageView({uri, hidden, onFail}: {uri: string; hidden: boolean; onFail: () => void}) {
   const [box, setBox] = useState<{w: number; h: number} | null>(null);
   const [ratio, setRatio] = useState<number | null>(null);
 
@@ -201,7 +239,7 @@ function ImageView({uri, onFail}: {uri: string; onFail: () => void}) {
     <View style={styles.imageBox} onLayout={e => setBox({w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height})}>
       {box && ratio ? (
         <Zoomable width={shown.width} height={shown.height}>
-          <Image source={{uri}} style={shown} resizeMode="contain" />
+          {hidden ? <View style={shown} /> : <Image source={{uri}} style={shown} resizeMode="contain" />}
         </Zoomable>
       ) : (
         <SkeletonBlock width="100%" height={240} />
@@ -228,6 +266,29 @@ export function ViewerScreen({route, navigation}: Props) {
   const [password, setPassword] = useState('');
   const historyRef = useRef(history);
   historyRef.current = history;
+  const hidden = useInBackground();
+  // The PDF pages that have a picture: [first, last], PAGE_WINDOW of them.
+  const [pageWindow, setPageWindow] = useState<[number, number]>([0, PAGE_WINDOW - 1]);
+  // Where each page starts in the scroll, measured as they lay out.
+  const pageTops = useRef<number[]>([]);
+
+  // Drawn pages live in the cache only while the viewer is open.
+  useEffect(
+    () => () => {
+      FileBridge.clearRenderedPages().catch(() => {});
+    },
+    [],
+  );
+
+  const onScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const {contentOffset, layoutMeasurement} = e.nativeEvent;
+    const middle = contentOffset.y + layoutMeasurement.height / 2;
+    const tops = pageTops.current;
+    let at = 0;
+    while (at + 1 < tops.length && tops[at + 1] != null && tops[at + 1] <= middle) at++;
+    const first = Math.max(0, at - Math.floor(PAGE_WINDOW / 2) + 1);
+    setPageWindow(w => (w[0] === first ? w : [first, first + PAGE_WINDOW - 1]));
+  }, []);
 
   // Viewing is free: nothing here counts a conversion or shows an ad.
   const load = useCallback(
@@ -235,6 +296,8 @@ export function ViewerScreen({route, navigation}: Props) {
       setBusy(true);
       setError(null);
       setSheet(0);
+      setPageWindow([0, PAGE_WINDOW - 1]);
+      pageTops.current = [];
       try {
         setPreview(await buildPreview(target, pass));
         setNeedsPassword(false);
@@ -361,7 +424,7 @@ export function ViewerScreen({route, navigation}: Props) {
     }
 
     if (preview.kind === 'image') {
-      return <ImageView uri={file.uri} onFail={() => setError('This picture could not be decoded on this phone.')} />;
+      return <ImageView uri={file.uri} hidden={hidden} onFail={() => setError('This picture could not be decoded on this phone.')} />;
     }
 
     if (preview.kind === 'pdf') {
@@ -369,17 +432,17 @@ export function ViewerScreen({route, navigation}: Props) {
         <View>
           <Text style={[type.caption, {color: t.textMuted, textAlign: 'center', marginBottom: spacing.sm}]}>Tap a page to zoom in</Text>
           {Array.from({length: preview.pageCount}, (_, i) => (
-            <Animated.View key={i} entering={enter(i, 50)}>
+            <Animated.View key={i} entering={enter(i, 50)} onLayout={e => (pageTops.current[i] = e.nativeEvent.layout.y)}>
               <PressableScale onPress={() => setZoomPage(i)} scaleTo={0.98} style={{marginBottom: spacing.lg}}>
                 <Text style={[type.caption, {color: t.textDim, marginBottom: 6}]}>
                   Page {i + 1} of {preview.pageCount}
                 </Text>
-                <PdfPage uri={file.uri} index={i} width={pageWidth} password={password} />
+                <PdfPage uri={file.uri} index={i} width={pageWidth} password={password} live={!hidden && i >= pageWindow[0] && i <= pageWindow[1]} />
               </PressableScale>
             </Animated.View>
           ))}
           {zoomPage !== null ? (
-            <PageZoom uri={file.uri} index={zoomPage} pageCount={preview.pageCount} password={password} onClose={() => setZoomPage(null)} />
+            <PageZoom uri={file.uri} index={zoomPage} pageCount={preview.pageCount} password={password} hidden={hidden} onClose={() => setZoomPage(null)} />
           ) : null}
         </View>
       );
@@ -424,6 +487,8 @@ export function ViewerScreen({route, navigation}: Props) {
             originWhitelist={['*']}
             source={{html: active.html}}
             style={styles.web}
+            // Inline pages only: nothing worth keeping in the WebView's cache.
+            cacheEnabled={false}
             javaScriptEnabled={false}
             // Pinch to zoom, so a wide sheet can be pulled back far enough to read.
             setBuiltInZoomControls
@@ -457,6 +522,7 @@ export function ViewerScreen({route, navigation}: Props) {
           originWhitelist={['*']}
           source={{html: preview.html}}
           style={styles.web}
+          cacheEnabled={false}
           javaScriptEnabled={false}
           setBuiltInZoomControls
           setDisplayZoomControls={false}
@@ -483,7 +549,11 @@ export function ViewerScreen({route, navigation}: Props) {
       {fills ? (
         <View style={styles.fill}>{body()}</View>
       ) : (
-        <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          showsVerticalScrollIndicator={false}
+          onScroll={preview?.kind === 'pdf' ? onScroll : undefined}
+          scrollEventThrottle={100}>
           {body()}
         </ScrollView>
       )}

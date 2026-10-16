@@ -4,4 +4,6 @@
     <color name="canvas">#F5F6F9</color>
     <!-- Behind the adaptive icon foreground, sampled from the icon artwork edge. -->
     <color name="icon_bg">#001340</color>
+    <!-- The same for the light-mode icon. -->
+    <color name="icon_bg_light">#FDFDFD</color>
 </resources>

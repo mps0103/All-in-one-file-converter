@@ -15,6 +15,8 @@ import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.cos.COSBase
 import com.tom_roush.pdfbox.cos.COSName
 import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.pdmodel.graphics.color.PDDeviceGray
+import com.tom_roush.pdfbox.pdmodel.graphics.color.PDDeviceRGB
 import com.tom_roush.pdfbox.pdmodel.graphics.image.JPEGFactory
 import com.tom_roush.pdfbox.pdmodel.graphics.image.PDImageXObject
 import java.io.File
@@ -83,7 +85,7 @@ class PdfCompressModule(reactContext: ReactApplicationContext) :
                         }
 
                         val original = try {
-                            xObject.image
+                            runCatching { sampledJpeg(xObject, maxEdge) }.getOrNull() ?: xObject.image
                         } catch (e: Exception) {
                             null
                         } ?: continue
@@ -218,6 +220,31 @@ class PdfCompressModule(reactContext: ReactApplicationContext) :
         } catch (e: Exception) {
             promise.reject("E_IO", e.message ?: "Could not process that image.", e)
         }
+    }
+
+    /**
+     * A plain JPEG picture in the PDF, decoded from its own bytes and sampled down
+     * to half, a quarter… of its size as it is read, never above maxEdge × 2. Asking
+     * PDFBox for the image decodes it whole first: 48 MB for a 12 MP photo that is
+     * about to be shrunk to 1600 px anyway. Null for anything with a mask, a Decode
+     * array, CMYK or 16-bit samples — those go through PDFBox exactly as before —
+     * and when the picture is not even twice the size it is being brought down to.
+     */
+    private fun sampledJpeg(image: PDImageXObject, maxEdge: Int): Bitmap? {
+        if (maxEdge <= 0 || image.suffix != "jpg" || image.bitsPerComponent != 8) return null
+        val dict = image.cosObject
+        if (dict.containsKey(COSName.MASK) || dict.containsKey(COSName.SMASK) || dict.containsKey(COSName.DECODE)) return null
+        val cs = image.colorSpace
+        val plain = cs is PDDeviceRGB || cs is PDDeviceGray || (cs.name == "ICCBased" && cs.numberOfComponents in setOf(1, 3))
+        if (!plain) return null
+        var sample = 1
+        while (maxOf(image.width, image.height) / (sample * 2) >= maxEdge) sample *= 2
+        if (sample == 1) return null
+        val opts = BitmapFactory.Options().apply {
+            inSampleSize = sample
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+        }
+        return image.stream.createInputStream(listOf(COSName.DCT_DECODE.name)).use { BitmapFactory.decodeStream(it, null, opts) }
     }
 
     /** Returns a downscaled and/or desaturated copy, or the input when nothing to do. */

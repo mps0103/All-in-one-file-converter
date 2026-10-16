@@ -1,5 +1,5 @@
 import React, {useEffect, useMemo, useState} from 'react';
-import {Image, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
+import {Image, PixelRatio, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import Animated, {FadeIn, LinearTransition, ZoomIn} from 'react-native-reanimated';
 import type {NativeStackScreenProps} from '@react-navigation/native-stack';
 
@@ -25,6 +25,7 @@ import {
 } from '@/components/ui';
 import {PreviewBar, Waveform, useAudioPreview, useWaveform} from '@/components/audio';
 import {useApp} from '@/hooks/AppState';
+import {useInBackground} from '@/hooks/useInBackground';
 import {FileBridge, isCancelled, type PickedFile} from '@/native/FileBridge';
 import {scanPages} from '@/native/scanner';
 import {MediaTools, type MediaProbe} from '@/native/Tools';
@@ -73,6 +74,7 @@ function ToolScreenBody({route, navigation}: Props) {
   const [probing, setProbing] = useState(false);
   const [probeError, setProbeError] = useState('');
   const [thumb, setThumb] = useState('');
+  const hidden = useInBackground();
   const [gate, setGate] = useState(false);
   const [error, setError] = useState('');
 
@@ -105,7 +107,8 @@ function ToolScreenBody({route, navigation}: Props) {
           }
         }
         if (p.hasVideo) {
-          MediaTools.thumbnail(first, Math.min(1000, p.durationMs / 3), 480)
+          // Drawn at the size it is shown, in real pixels.
+          MediaTools.thumbnail(first, Math.min(1000, p.durationMs / 3), Math.round(styles.thumb.width * PixelRatio.get()))
             .then(b => alive && setThumb(b))
             .catch(() => {});
         }
@@ -312,7 +315,8 @@ function ToolScreenBody({route, navigation}: Props) {
               </Card>
             ) : probe ? (
               <Card style={[styles.probe, {marginTop: spacing.sm}]}>
-                {thumb ? <Image source={{uri: `data:image/jpeg;base64,${thumb}`}} style={styles.thumb} /> : null}
+                {/* In the background the frame's place is kept, empty, so nothing moves on return. */}
+                {thumb ? hidden ? <View style={styles.thumb} /> : <Image source={{uri: thumb}} style={styles.thumb} /> : null}
                 <View style={{flex: 1}}>
                   <Text style={[type.bodyNum, {color: t.text}]}>{clock(probe.durationMs)}</Text>
                   <Text style={[type.caption, {color: t.textMuted, marginTop: 3}]}>

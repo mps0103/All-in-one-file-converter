@@ -244,12 +244,25 @@ class FileBridgeModule(private val ctx: ReactApplicationContext) :
      * app carries no extra rendering library. The document is copied to the cache
      * first because PdfRenderer needs a seekable file descriptor, which a content
      * uri from a cloud provider does not always give.
+     *
+     * Each page is written to a PNG in the cache and its file uri returned, so JS
+     * holds a short path rather than the image as a base64 string, and a page that
+     * scrolls away and back is read from disk instead of drawn again. The renderer
+     * and its descriptor are open only for the one page.
      */
     @ReactMethod
     fun renderPdfPage(uriString: String, index: Int, targetWidth: Int, password: String, promise: Promise) {
         var descriptor: ParcelFileDescriptor? = null
         var renderer: PdfRenderer? = null
         try {
+            val width = targetWidth.coerceIn(320, 2000)
+            val pageFile = File(renderedPagesDir(), "${uriString.hashCode()}-$index-$width.png")
+            val sizeFile = File(pageFile.path + ".size")
+            if (pageFile.length() > 0 && sizeFile.exists()) {
+                val (w, h) = sizeFile.readText().split("x").map { it.toInt() }
+                promise.resolve(renderedPage(pageFile, w, h))
+                return
+            }
             val cached = cachePdf(Uri.parse(uriString), password)
             descriptor = ParcelFileDescriptor.open(cached, ParcelFileDescriptor.MODE_READ_ONLY)
             renderer = PdfRenderer(descriptor)
@@ -258,21 +271,19 @@ class FileBridgeModule(private val ctx: ReactApplicationContext) :
                 return
             }
             renderer.openPage(index).use { page ->
-                val width = targetWidth.coerceIn(320, 2000)
                 val height = (width.toFloat() * page.height / page.width).toInt().coerceAtLeast(1)
                 val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-                // A page is transparent wherever nothing is drawn, so it needs a white
-                // ground or the text lands on whatever is behind the image.
-                bitmap.eraseColor(Color.WHITE)
-                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                val out = java.io.ByteArrayOutputStream()
-                bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
-                bitmap.recycle()
-                val map = Arguments.createMap()
-                map.putString("base64", Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP))
-                map.putInt("width", width)
-                map.putInt("height", height)
-                promise.resolve(map)
+                try {
+                    // A page is transparent wherever nothing is drawn, so it needs a white
+                    // ground or the text lands on whatever is behind the image.
+                    bitmap.eraseColor(Color.WHITE)
+                    page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    FileOutputStream(pageFile).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                } finally {
+                    bitmap.recycle()
+                }
+                sizeFile.writeText("${width}x$height")
+                promise.resolve(renderedPage(pageFile, width, height))
             }
         } catch (e: PasswordRequired) {
             promise.reject("password", e.message)
@@ -301,6 +312,24 @@ class FileBridgeModule(private val ctx: ReactApplicationContext) :
             try { renderer?.close() } catch (_: Exception) {}
             try { descriptor?.close() } catch (_: Exception) {}
         }
+    }
+
+    /**
+     * Drops the viewer's page images. Called when the viewer closes: a page is cheap
+     * to draw again and there is no reason to keep them on the phone.
+     */
+    @ReactMethod
+    fun clearRenderedPages(promise: Promise) {
+        renderedPagesDir().deleteRecursively()
+        promise.resolve(null)
+    }
+
+    private fun renderedPagesDir() = File(ctx.cacheDir, "viewer-pages").apply { mkdirs() }
+
+    private fun renderedPage(file: File, width: Int, height: Int): WritableMap = Arguments.createMap().apply {
+        putString("uri", "file://${file.absolutePath}")
+        putInt("width", width)
+        putInt("height", height)
     }
 
     /** Signals "this document is locked" so JS can put a password box on screen. */

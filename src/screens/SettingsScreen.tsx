@@ -14,7 +14,7 @@ import {privacyOptionsRequired, showPrivacyOptions} from '@/services/ads';
 import {humanBytes} from '@/tools/helpers';
 import {radius, spacing, type, useTheme, useThemeMode, type ThemeMode} from '@/theme';
 
-export const APP_VERSION = '1.0.0';
+export const APP_VERSION = '1.1.0';
 const PRIVACY_URL = 'https://mps0103.github.io/All-in-one-file-converter/privacy-policy.html';
 const TERMS_URL = 'https://mps0103.github.io/All-in-one-file-converter/terms-of-use.html';
 const SUPPORT_EMAIL = 'info@dealtrix.com';

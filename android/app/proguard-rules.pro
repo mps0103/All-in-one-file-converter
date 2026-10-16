@@ -1,21 +1,30 @@
-# React Native
--keep class com.facebook.react.** { *; }
--keep class com.facebook.hermes.** { *; }
--keep class com.facebook.jni.** { *; }
+# R8 runs in full mode (gradle.properties). Libraries that ship their own consumer
+# rules — React Native and Hermes, Media3, ML Kit and its document scanner, Google
+# Mobile Ads — are left to those rules, so R8 can drop the parts this app never
+# calls. Blanket "-keep class lib.** { *; }" lines for them used to keep all of it.
+#
+# React Native's rules keep every NativeModule (this app's modules and the
+# document scanner plugin's), every JavaScriptModule, @ReactProp setters, JNI
+# methods and @DoNotStrip members.
 
-# The native converter bridge is reached by name from JS.
--keep class com.mps.allinone.FileBridgeModule { *; }
--keep class com.mps.allinone.ArchiveModule { *; }
--keep class com.mps.allinone.BillingModule { *; }
+# This app's own code is small and reached from JS by name; kept whole.
 -keep class com.mps.allinone.** { *; }
 
-# Media3 Transformer and ML Kit text recognition
--keep class androidx.media3.** { *; }
+# The MP3 encoder's JNI functions are bound by class and method name
+# (Java_com_mps_allinone_Mp3Encoder_*), so neither may be renamed.
+-keep class com.mps.allinone.Mp3Encoder { native <methods>; }
+
+# Document scanner plugin: two small classes, kept whole. The ML Kit scanner it
+# opens brings its own rules.
+-keep class com.documentscanner.** { *; }
+
+# Media3 Transformer and ML Kit text recognition: their own rules are enough.
 -dontwarn androidx.media3.**
--keep class com.google.mlkit.** { *; }
 -dontwarn com.google.mlkit.**
 
-# PDFBox for Android pulls in optional AWT and Bouncy Castle classes it can live without.
+# PDFBox for Android pulls in optional AWT and Bouncy Castle classes it can live
+# without. It loads fonts and glyph lists by resource path and some filters by
+# reflection, so it stays whole.
 -keep class com.tom_roush.pdfbox.** { *; }
 -dontwarn java.awt.**
 -dontwarn javax.imageio.**
@@ -32,7 +41,7 @@
 -dontwarn org.slf4j.impl.StaticLoggerBinder
 -dontwarn org.slf4j.**
 
-# Archive decoders
+# Archive decoders. commons-compress finds some formats by reflection.
 -keep class net.lingala.zip4j.** { *; }
 -keep class org.apache.commons.compress.** { *; }
 -keep class com.github.junrar.** { *; }
@@ -46,6 +55,5 @@
 -keep class com.android.billingclient.** { *; }
 -keep class com.android.vending.billing.** { *; }
 
-# Google Mobile Ads
--keep class com.google.android.gms.ads.** { *; }
+# Google Mobile Ads ships its own rules.
 -dontwarn com.google.android.gms.**

@@ -27,7 +27,8 @@ export type ArchiveResult = {
 
 export type ArchiveProgress = {stage: string; done: number; total: number};
 
-export type RenderedPage = {base64: string; width: number; height: number};
+/** A drawn page, as a PNG file in the app's cache. */
+export type RenderedPage = {uri: string; width: number; height: number};
 
 export type ArchiveEntryInfo = {name: string; size: number};
 
@@ -80,6 +81,8 @@ type Bridge = {
     password: string,
   ): Promise<RenderedPage>;
   pdfPageCount(uri: string, password: string): Promise<number>;
+  /** Deletes the viewer's drawn pages from the cache. */
+  clearRenderedPages(): Promise<void>;
   openFile(uri: string, mime: string): Promise<boolean>;
   shareFile(uri: string, mime: string): Promise<boolean>;
 };

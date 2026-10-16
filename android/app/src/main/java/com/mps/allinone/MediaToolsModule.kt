@@ -12,7 +12,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.util.Base64
 import androidx.annotation.OptIn
 import androidx.media3.common.Effect
 import androidx.media3.common.MediaItem
@@ -38,7 +37,6 @@ import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.ReadableArray
 import com.facebook.react.bridge.ReadableMap
 import com.facebook.react.modules.core.DeviceEventManagerModule
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.RandomAccessFile
@@ -120,23 +118,35 @@ class MediaToolsModule(private val ctx: ReactApplicationContext) : ReactContextB
         }
     }
 
-    /** A small JPEG preview frame, base64, for the video tool screens. */
+    /**
+     * A small JPEG preview frame for the video tool screens, written to the cache;
+     * resolves to its file uri. On Android 8.1 and later the frame is decoded at the
+     * small size directly — a 4K frame is 33 MB as a bitmap, the preview 0.3 MB.
+     */
     @ReactMethod
     fun thumbnail(uriString: String, timeMs: Double, width: Int, promise: Promise) {
         worker.execute {
             val r = MediaMetadataRetriever()
             try {
                 r.setDataSource(ctx, toUri(uriString))
-                val frame = r.getFrameAtTime((timeMs * 1000).toLong(), MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                    ?: throw IllegalStateException("No frame")
+                val us = (timeMs * 1000).toLong()
+                val frame = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                    // Fits the frame inside the box keeping its shape: width-bound, as below.
+                    r.getScaledFrameAtTime(us, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, width, width * 4)
+                } else {
+                    r.getFrameAtTime(us, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                }) ?: throw IllegalStateException("No frame")
                 val scaled = if (frame.width > width) {
                     Bitmap.createScaledBitmap(frame, width, (frame.height * width.toFloat() / frame.width).roundToInt(), true)
                 } else frame
-                val bytes = ByteArrayOutputStream()
-                scaled.compress(Bitmap.CompressFormat.JPEG, 80, bytes)
+                val dir = File(ctx.cacheDir, "thumbs").apply { mkdirs() }
+                // One preview at a time is ever on screen; older ones are let go.
+                dir.listFiles()?.forEach { it.delete() }
+                val out = File(dir, "thumb-${System.currentTimeMillis()}.jpg")
+                FileOutputStream(out).use { scaled.compress(Bitmap.CompressFormat.JPEG, 80, it) }
                 if (scaled !== frame) scaled.recycle()
                 frame.recycle()
-                promise.resolve(Base64.encodeToString(bytes.toByteArray(), Base64.NO_WRAP))
+                promise.resolve("file://${out.absolutePath}")
             } catch (e: Exception) {
                 promise.reject("E_THUMB", e.message, e)
             } finally {
