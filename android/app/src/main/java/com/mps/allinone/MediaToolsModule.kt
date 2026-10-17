@@ -44,6 +44,8 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
@@ -154,6 +156,79 @@ class MediaToolsModule(private val ctx: ReactApplicationContext) : ReactContextB
             }
         }
     }
+
+    /**
+     * The trim screen's frame strip: count small JPEGs spread evenly over the video,
+     * each heightPx tall, in the cache. Each is sent as a "thumbStrip" event
+     * {index, uri, job} the moment it is written, so the strip fills in as they
+     * come; the promise resolves with all of them in order. Every frame is decoded
+     * at the small size (Android 8.1+) and recycled once saved, and a new strip or
+     * clearThumbnails() stops one still being made.
+     */
+    @ReactMethod
+    fun thumbnails(uriString: String, count: Int, heightPx: Int, promise: Promise) {
+        val job = stripJob.incrementAndGet()
+        strip.execute {
+            val r = MediaMetadataRetriever()
+            try {
+                r.setDataSource(ctx, toUri(uriString))
+                val durUs = (r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L) * 1000
+                val n = count.coerceIn(1, 30)
+                val h = heightPx.coerceIn(16, 400)
+                val dir = File(ctx.cacheDir, STRIP_DIR).apply { mkdirs() }
+                dir.listFiles()?.forEach { it.delete() }
+                val uris = Arguments.createArray()
+                for (i in 0 until n) {
+                    if (stripJob.get() != job) break
+                    // The middle of each slice, so the first frame is not a black lead-in.
+                    val us = (durUs * (i + 0.5) / n).toLong()
+                    val frame = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                        // Fits inside h * 4 by h: height-bound for any normal video.
+                        r.getScaledFrameAtTime(us, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, h * 4, h)
+                    } else {
+                        r.getFrameAtTime(us, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                    }) ?: continue
+                    val scaled = if (frame.height > h) {
+                        Bitmap.createScaledBitmap(frame, max(1, (frame.width * h.toFloat() / frame.height).roundToInt()), h, true)
+                    } else frame
+                    val out = File(dir, "s$job-$i.jpg")
+                    FileOutputStream(out).use { scaled.compress(Bitmap.CompressFormat.JPEG, 75, it) }
+                    if (scaled !== frame) scaled.recycle()
+                    frame.recycle()
+                    val uri = "file://${out.absolutePath}"
+                    uris.pushString(uri)
+                    try {
+                        ctx.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                            .emit("thumbStrip", Arguments.createMap().apply {
+                                putInt("index", i)
+                                putString("uri", uri)
+                                putInt("job", job)
+                            })
+                    } catch (_: Exception) {
+                    }
+                }
+                promise.resolve(Arguments.createMap().apply {
+                    putInt("job", job)
+                    putArray("uris", uris)
+                })
+            } catch (e: Exception) {
+                promise.reject("E_THUMB", e.message ?: "Could not read frames from this video.", e)
+            } finally {
+                try { r.release() } catch (_: Exception) {}
+            }
+        }
+    }
+
+    /** The trim screen has closed: any strip still being made stops, and its files go. */
+    @ReactMethod
+    fun clearThumbnails() {
+        stripJob.incrementAndGet()
+        strip.execute { File(ctx.cacheDir, STRIP_DIR).listFiles()?.forEach { it.delete() } }
+    }
+
+    /** Its own thread, so the strip never waits behind a probe or a running job. */
+    private val strip = Executors.newSingleThreadExecutor()
+    private val stripJob = AtomicInteger(0)
 
     // ------------------------------------------------------------------- video
 
@@ -951,5 +1026,6 @@ class MediaToolsModule(private val ctx: ReactApplicationContext) : ReactContextB
 
     companion object {
         const val OUT_RATE = 44_100
+        const val STRIP_DIR = "strip"
     }
 }

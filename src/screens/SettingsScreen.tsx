@@ -101,6 +101,7 @@ export function SettingsScreen() {
             <View style={{marginTop: spacing.sm}}>
               <Segmented<ThemeMode> options={['system', 'dark', 'light']} labels={{system: 'System', dark: 'Dark', light: 'Light'}} value={mode} onChange={setMode} />
             </View>
+            <Text style={[type.caption, {color: t.textMuted, marginTop: spacing.sm}]}>The app icon updates after you leave the app.</Text>
           </Card>
         </Animated.View>
 

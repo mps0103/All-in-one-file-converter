@@ -40,7 +40,27 @@ export type ImageOptions = {
   flipV?: boolean;
   grayscale?: boolean;
   aspect?: string;
+  /** Fractions of the upright picture after rotate/flip. */
+  crop?: {x: number; y: number; w: number; h: number};
+  dpi?: number;
+  /** Copy the file and change only its DPI; the pixels stay as they are. */
+  dpiOnly?: boolean;
   outPath: string;
+};
+
+/** What ImageTools.preview made, and the size the real job will be. */
+export type ImagePreview = {
+  uri: string;
+  width: number;
+  height: number;
+  outWidth: number;
+  outHeight: number;
+  estimatedBytes: number;
+  /** The picture itself, upright. */
+  srcWidth: number;
+  srcHeight: number;
+  /** The preview is the job itself, so its size is exact. */
+  exact: boolean;
 };
 
 export type VideoOptions = {
@@ -77,18 +97,28 @@ type WorkbenchNative = {
   fileSize(path: string): Promise<number>;
   cacheSize(): Promise<number>;
   clearCache(): Promise<number>;
+  setLauncherIcon(which: 'dark' | 'light'): void;
 };
 
 type ImageNative = {
   process(uri: string, opts: ImageOptions): Promise<{path: string; width: number; height: number; size: number; format: string}>;
   imagesToPdf(uris: string[], pageSize: string, margin: number, outPath: string): Promise<string>;
   recognizeText(uri: string): Promise<{text: string; blocks: number}>;
+  /** The job at preview size; null when a newer preview for the same slot replaced it. */
+  preview(uri: string, opts: Omit<ImageOptions, 'outPath'> & {slot?: string}, maxSide: number): Promise<ImagePreview | null>;
+  clearPreviews(): void;
 };
 
 type MediaNative = {
   probe(uri: string): Promise<MediaProbe>;
   /** A preview frame as a JPEG in the cache; resolves to its file uri. */
   thumbnail(uri: string, timeMs: number, width: number): Promise<string>;
+  /** count frames over the whole video, heightPx tall, also sent one by one (onThumbStrip). */
+  thumbnails(uri: string, count: number, heightPx: number): Promise<{job: number; uris: string[]}>;
+  clearThumbnails(): void;
+  /** count frames over the whole video, heightPx tall, sent one by one as onThumbStrip events. */
+  thumbnails(uri: string, count: number, heightPx: number): Promise<{job: number; uris: string[]}>;
+  clearThumbnails(): void;
   transformVideo(uris: string[], opts: VideoOptions): Promise<{path: string; size: number; durationMs: number}>;
   transformAudio(uris: string[], opts: AudioOptions): Promise<{path: string; size: number; durationMs: number}>;
   /** Peak level per slice of time, 0..1, for drawing the sound. */
@@ -165,5 +195,13 @@ export const onMediaProgress = (fn: (p: {percent: number; stage: string}) => voi
   if (!N.MediaTools) return () => {};
   const emitter = new NativeEventEmitter(N.MediaTools);
   const sub = emitter.addListener('mediaProgress', p => fn(p as unknown as {percent: number; stage: string}));
+  return () => sub.remove();
+};
+
+/** Frames of the trim strip as they are written. */
+export const onThumbStrip = (fn: (p: {index: number; uri: string; job: number}) => void) => {
+  if (!N.MediaTools) return () => {};
+  const emitter = new NativeEventEmitter(N.MediaTools);
+  const sub = emitter.addListener('thumbStrip', p => fn(p as unknown as {index: number; uri: string; job: number}));
   return () => sub.remove();
 };

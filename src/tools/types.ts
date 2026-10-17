@@ -22,7 +22,9 @@ export type Opt =
    * A window of fixed length slid over the media, for ringtones. The chosen length
    * (ms, one of lengths) is stored under key; the window writes startMs and endMs.
    */
-  | (OptBase & {kind: 'window'; lengths: number[]; def: number});
+  | (OptBase & {kind: 'window'; lengths: number[]; def: number})
+  /** The crop box over the picture. Writes crop (fractions), rotate and cropAspect. */
+  | (OptBase & {kind: 'crop'});
 
 export type Opts = Record<string, any>;
 
@@ -70,6 +72,13 @@ export type Tool = {
   free?: boolean;
   /** Shown under the options: what the tool keeps and what it cannot do. */
   note?: string;
+  /**
+   * Image tools: the options handed to the image engine, from the screen's options.
+   * The run and the live preview both use it, so the preview is the job.
+   */
+  imageOpts?: (o: Opts) => Opts;
+  /** How the live preview shows: the result alone, or before and after side by side. */
+  preview?: 'result' | 'compare';
   run: (ctx: RunContext) => Promise<RunResult>;
 };
 

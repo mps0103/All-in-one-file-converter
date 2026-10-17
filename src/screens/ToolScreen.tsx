@@ -24,16 +24,20 @@ import {
   WindowSlider,
 } from '@/components/ui';
 import {PreviewBar, Waveform, useAudioPreview, useWaveform} from '@/components/audio';
+import {CropEditor, ImagePreviewCard, useClearPreviewsOnClose} from '@/components/imageTools';
+import {VideoTrimmer} from '@/components/videoTrim';
 import {useApp} from '@/hooks/AppState';
 import {useInBackground} from '@/hooks/useInBackground';
 import {FileBridge, isCancelled, type PickedFile} from '@/native/FileBridge';
 import {scanPages} from '@/native/scanner';
 import {MediaTools, type MediaProbe} from '@/native/Tools';
 import {isRewardedReady, showRewarded} from '@/services/ads';
+import {FREE_CONVERSIONS} from '@/services/quota';
 import {realId, toolFor} from '@/tools/registry';
 import {clock, humanBytes} from '@/tools/helpers';
+import {imageOptions} from '@/tools/media';
 import type {Opt, Opts} from '@/tools/types';
-import {radius, spacing, tints, type, useTheme} from '@/theme';
+import {radius, spacing, tints, type, useTheme, type TintName} from '@/theme';
 import type {RootStackParamList} from '@/navigation/types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Tool'>;
@@ -78,12 +82,18 @@ function ToolScreenBody({route, navigation}: Props) {
   const [gate, setGate] = useState(false);
   const [error, setError] = useState('');
 
-  const set = (k: string, v: unknown) => setO(prev => ({...prev, [k]: v}));
+  // The picture's own size, upright, once its preview has been drawn: what the
+  // linked width and height fields of Resize work from.
+  const [src, setSrc] = useState<{w: number; h: number} | null>(null);
+  const linked = !!tool.options?.some(x => x.key === 'keepAspect');
+  const set = (k: string, v: unknown) => setO(prev => linkSides({...prev, [k]: v}, k, linked ? src : null));
+  useClearPreviewsOnClose();
   // The part of the media being kept: two handles (trim) or a fixed-length window (ringtone).
   const trimOpt = tool.options?.find(x => x.kind === 'trim' || x.kind === 'window');
 
   // Audio and video: read length and size of the first file.
   const first = files[0]?.uri;
+  useEffect(() => setSrc(null), [first]);
   useEffect(() => {
     if (!tool.media || !first) {
       setProbe(null);
@@ -340,6 +350,19 @@ function ToolScreenBody({route, navigation}: Props) {
           </Animated.View>
         ) : null}
 
+        {tool.imageOpts && tool.preview && files[0] ? (
+          <Animated.View entering={enter(2, 40)}>
+            <SectionHeader title="Preview" />
+            <ImagePreviewCard
+              file={files[0]}
+              opts={imageOptions(files[0], tool.imageOpts(o))}
+              compare={tool.preview === 'compare'}
+              tint={tool.tint}
+              onInfo={p => setSrc(prev => (prev && prev.w === p.srcWidth && prev.h === p.srcHeight ? prev : {w: p.srcWidth, h: p.srcHeight}))}
+            />
+          </Animated.View>
+        ) : null}
+
         {visible.length ? <SectionHeader title="Options" /> : null}
         {visible.map((opt, i) => (
           <Animated.View key={opt.key} entering={enter(i + 2, 40)} layout={LinearTransition.duration(220)}>
@@ -348,6 +371,8 @@ function ToolScreenBody({route, navigation}: Props) {
               o={o}
               set={set}
               probe={probe}
+              file={files[0]}
+              tint={tool.tint}
               audio={listen ? {peaks, playing: preview.playing, position: preview.position, toggle: togglePreview, onTrimRelease, playWindow: (s: number, e: number) => preview.play(s, e)} : undefined}
             />
           </Animated.View>
@@ -373,7 +398,7 @@ function ToolScreenBody({route, navigation}: Props) {
         icon="crown"
         tint="gold"
         title="Free conversions used up"
-        message="Your 10 free conversions are used. Watch a short ad for one more, or go Premium for unlimited."
+        message={`Your ${FREE_CONVERSIONS} free conversions are used. Watch a short ad for one more, or go Premium for unlimited.`}
         actions={[
           {label: 'Watch ad (+1)', onPress: watchAd},
           {
@@ -400,7 +425,28 @@ type AudioUi = {
   playWindow: (fromMs: number, toMs: number) => void;
 };
 
-function OptionView({opt, o, set, probe, audio}: {opt: Opt; o: Opts; set: (k: string, v: unknown) => void; probe: MediaProbe | null; audio?: AudioUi}) {
+/**
+ * Resize's width and height with "Keep proportions" on: typing one fills in the
+ * other from the picture's own shape, rounded once. What is being typed is kept
+ * exactly as typed (only capped at 10000), so the field never jumps under the
+ * finger; turning the lock on fills the height in from the width.
+ */
+function linkSides(o: Opts, k: string, src: {w: number; h: number} | null): Opts {
+  if (k === 'width' || k === 'height') {
+    const n = parseInt(String(o[k] ?? ''), 10);
+    if (n > 10000) o[k] = '10000';
+  }
+  if (!src || !src.w || !src.h || !o.keepAspect) return o;
+  const from = k === 'keepAspect' ? (o.width ? 'width' : o.height ? 'height' : '') : k;
+  if (from !== 'width' && from !== 'height') return o;
+  const n = Math.min(10000, parseInt(String(o[from] ?? ''), 10));
+  const other = from === 'width' ? 'height' : 'width';
+  if (!(n >= 1)) return {...o, [other]: ''};
+  const v = from === 'width' ? (n * src.h) / src.w : (n * src.w) / src.h;
+  return {...o, [other]: String(Math.max(1, Math.min(10000, Math.round(v))))};
+}
+
+function OptionView({opt, o, set, probe, file, tint, audio}: {opt: Opt; o: Opts; set: (k: string, v: unknown) => void; probe: MediaProbe | null; file?: PickedFile; tint: TintName; audio?: AudioUi}) {
   const t = useTheme();
   switch (opt.kind) {
     case 'segment':
@@ -436,11 +482,28 @@ function OptionView({opt, o, set, probe, audio}: {opt: Opt; o: Opts; set: (k: st
           <Slider value={Number(o[opt.key])} min={opt.min} max={opt.max} step={opt.step} onChange={v => set(opt.key, v)} />
         </View>
       );
+    case 'crop':
+      return file ? <CropEditor file={file} o={o} set={set} tint={tint} /> : null;
     case 'trim': {
       const dur = probe?.durationMs ?? 0;
       if (!dur) return null;
       const s = Number(o.startMs ?? 0);
       const e = Number(o.endMs ?? dur);
+      if (probe?.hasVideo && file) {
+        return (
+          <VideoTrimmer
+            uri={file.uri}
+            probe={probe}
+            start={s}
+            end={e}
+            tint={tint}
+            onChange={(ns, ne) => {
+              set('startMs', ns);
+              set('endMs', ne);
+            }}
+          />
+        );
+      }
       return (
         <View style={styles.opt}>
           <View style={styles.optHead}>

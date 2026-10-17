@@ -35,16 +35,6 @@ class MainActivity : ReactActivity() {
         super.onCreate(null)
     }
 
-    /** Leaving the screen: the home-screen icon is matched to the phone's light or dark mode. */
-    override fun onStop() {
-        super.onStop()
-        try {
-            LauncherIcon.match(this)
-        } catch (_: Exception) {
-            // Some launchers or work profiles refuse component changes; the icon simply stays.
-        }
-    }
-
     override fun onNewIntent(intent: Intent) {
         normalise(intent)
         super.onNewIntent(intent)

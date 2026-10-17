@@ -32,8 +32,8 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
 
         // Bump both together at the end of a batch of changes, before every Play upload.
-        versionCode 2
-        versionName "1.1.0"
+        versionCode 3
+        versionName "1.2.0"
 
         multiDexEnabled true
         resourceConfigurations += ["en"]
@@ -159,6 +159,8 @@ dependencies {
     implementation "androidx.media3:media3-transformer:1.5.1"
     implementation "androidx.media3:media3-effect:1.5.1"
     implementation "androidx.media3:media3-common:1.5.1"
+    // Already inside Transformer; named so the trim screen can play the clip.
+    implementation "androidx.media3:media3-exoplayer:1.5.1"
     implementation "androidx.annotation:annotation-experimental:1.4.1"
 
     // Image orientation for photos on Android 8 and older.

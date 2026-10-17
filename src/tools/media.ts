@@ -1,5 +1,5 @@
 import type {PickedFile} from '@/native/FileBridge';
-import {ImageTools, MediaTools, onMediaProgress, type AudioOptions, type MediaProbe, type VideoOptions} from '@/native/Tools';
+import {ImageTools, MediaTools, onMediaProgress, type AudioOptions, type ImageOptions, type MediaProbe, type VideoOptions} from '@/native/Tools';
 import {base, ext, humanBytes, named, publish, sum, temp} from './helpers';
 import type {Opts, RunResult} from './types';
 
@@ -132,30 +132,46 @@ const outExt = (f: PickedFile, format: string) => {
   return 'jpg';
 };
 
+/** A size typed into a field, as the native side takes it: 1..10000, or none. */
+const side = (v: unknown) => {
+  const n = parseInt(String(v ?? ''), 10);
+  return n > 0 ? Math.min(n, 10000) : undefined;
+};
+
+/**
+ * The native options for one picture. The live preview and the real job both come
+ * from here, so what the preview shows is what is saved.
+ */
+export function imageOptions(f: PickedFile, o: Opts): Omit<ImageOptions, 'outPath'> & {format: 'jpg' | 'png' | 'webp'} {
+  const dpiOnly = !!o.dpiOnly;
+  return {
+    format: (dpiOnly ? outExt(f, 'same') : outExt(f, o.format ?? 'same')) as 'jpg' | 'png' | 'webp',
+    quality: o.quality != null ? Number(o.quality) : 90,
+    maxEdge: o.maxEdge ? Number(o.maxEdge) : undefined,
+    width: side(o.width),
+    height: side(o.height),
+    keepAspect: o.keepAspect ?? true,
+    scale: o.scale ? Number(o.scale) : undefined,
+    rotate: o.rotate ? (Number(o.rotate) as 90 | 180 | 270) : undefined,
+    flipH: o.flip === 'h',
+    flipV: o.flip === 'v',
+    grayscale: !!o.grayscale,
+    aspect: o.aspect,
+    crop: o.crop,
+    dpi: o.dpi ? Number(o.dpi) : undefined,
+    dpiOnly,
+  };
+}
+
 export async function image(files: PickedFile[], o: Opts, suffix: string, progress: Progress): Promise<RunResult> {
   const out = [];
   for (let i = 0; i < files.length; i++) {
     const f = files[i];
     progress(5 + (i / files.length) * 90, files.length > 1 ? `Image ${i + 1} of ${files.length}` : 'Processing image');
-    const format = o.format ?? 'same';
-    const e = outExt(f, format);
-    const dest = await temp(named(f.name, suffix, e));
-    const res = await ImageTools.process(f.uri, {
-      outPath: dest,
-      format: e as 'jpg' | 'png' | 'webp',
-      quality: o.quality != null ? Number(o.quality) : 90,
-      maxEdge: o.maxEdge ? Number(o.maxEdge) : undefined,
-      width: o.width ? parseInt(o.width, 10) || undefined : undefined,
-      height: o.height ? parseInt(o.height, 10) || undefined : undefined,
-      keepAspect: o.keepAspect ?? true,
-      scale: o.scale ? Number(o.scale) : undefined,
-      rotate: o.rotate ? (Number(o.rotate) as 90 | 180 | 270) : undefined,
-      flipH: o.flip === 'h',
-      flipV: o.flip === 'v',
-      grayscale: !!o.grayscale,
-      aspect: o.aspect,
-    });
-    out.push(await publish(res.path, named(f.name, suffix, e)));
+    const opts = imageOptions(f, o);
+    const dest = await temp(named(f.name, suffix, opts.format));
+    const res = await ImageTools.process(f.uri, {...opts, outPath: dest});
+    out.push(await publish(res.path, named(f.name, suffix, opts.format)));
   }
   return {files: out, beforeBytes: sum(files), afterBytes: sum(out)};
 }

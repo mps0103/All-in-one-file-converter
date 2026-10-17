@@ -8,7 +8,9 @@ import {getCredits, spendCredit} from './credits';
  * The free allowance is kept intentionally low for testing and promotion, and
  * every screen that mentions the allowance reads it from here.
  */
-export const FREE_CONVERSIONS = 10;
+// TODO before publishing: 50 is for the Play testing period only. Put it back to
+// 10 (see TODO.md) before the production release.
+export const FREE_CONVERSIONS = 50;
 
 export const getUsed = () => store.read<number>(KEYS.used, 0);
 

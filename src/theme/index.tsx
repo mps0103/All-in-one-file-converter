@@ -1,5 +1,5 @@
-import React, {createContext, useCallback, useContext, useEffect, useMemo, useState} from 'react';
-import {useColorScheme, type TextStyle} from 'react-native';
+import React, {createContext, useCallback, useContext, useEffect, useMemo, useRef, useState} from 'react';
+import {AppState, Appearance, NativeModules, useColorScheme, type TextStyle} from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 /**
@@ -155,6 +155,22 @@ export function ThemeProvider({children}: {children: React.ReactNode}) {
   const setMode = useCallback((m: ThemeMode) => {
     setModeState(m);
     AsyncStorage.setItem(MODE_KEY, m).catch(() => {});
+  }, []);
+
+  // The home-screen icon follows the theme, switched only as the app goes to the
+  // background: some launchers refresh, or even close the app, when it changes, so
+  // it never happens while the app is on screen. System means the phone's dark
+  // mode at that moment.
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', s => {
+      if (s !== 'background') return;
+      const m = modeRef.current;
+      const want = m === 'system' ? (Appearance.getColorScheme() === 'light' ? 'light' : 'dark') : m;
+      NativeModules.Workbench?.setLauncherIcon?.(want);
+    });
+    return () => sub.remove();
   }, []);
 
   const value = useMemo(() => {

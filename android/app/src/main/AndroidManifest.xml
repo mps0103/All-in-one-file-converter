@@ -177,7 +177,7 @@
         <!--
             The launcher entry, twice: the same screen under the dark-blue icon and
             under the light one. Exactly one is enabled; LauncherIcon.kt switches them
-            to follow the phone's light or dark mode. Dark is the one on at install.
+            to follow the app's Dark / Light / System theme. Dark is the one on at install.
         -->
         <activity-alias
             android:name=".LauncherDark"

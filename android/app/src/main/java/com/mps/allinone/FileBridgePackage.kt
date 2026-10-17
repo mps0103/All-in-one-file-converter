@@ -29,5 +29,5 @@ class FileBridgePackage : ReactPackage {
         )
 
     override fun createViewManagers(ctx: ReactApplicationContext): List<ViewManager<*, *>> =
-        emptyList()
+        listOf(TrimPlayerManager())
 }

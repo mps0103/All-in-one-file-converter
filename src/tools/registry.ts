@@ -5,7 +5,7 @@ import {ImageTools, MediaTools, PdfCrypto, PdfRender, Workbench} from '@/native/
 import {base, clock, humanBytes, named, saveText, stage} from './helpers';
 import * as P from './pdf';
 import * as M from './media';
-import type {Category, CategoryId, ConvertTab, Opt, RunContext, RunResult, Tool} from './types';
+import type {Category, CategoryId, ConvertTab, Opt, Opts, RunContext, RunResult, Tool} from './types';
 
 // ------------------------------------------------------------- categories
 
@@ -176,6 +176,13 @@ const makeArchive = async ({files, o, progress}: RunContext): Promise<RunResult>
   return {files: [{...saved, size}], beforeBytes: files.reduce((a, f) => a + (f.size || 0), 0), afterBytes: size};
 };
 
+/** An image tool: the run and the live preview share one mapping of the options. */
+const imageTool = (suffix: string, map: (o: Opts) => Opts, preview?: Tool['preview']) => ({
+  imageOpts: map,
+  preview,
+  run: (c: RunContext) => M.image(c.files, map(c.o), suffix, c.progress),
+});
+
 // ------------------------------------------------------------------ tools
 
 export const TOOLS: Tool[] = [
@@ -297,20 +304,25 @@ export const TOOLS: Tool[] = [
     accept: ['image/*'], multi: true,
     options: [imageFormat('jpg'), quality(90)],
     note: 'Opens JPG, PNG, WEBP, HEIC, BMP and GIF (first frame). Saves JPG, PNG or WEBP.',
-    run: c => M.image(c.files, c.o, '', c.progress),
+    ...imageTool('', o => o, 'compare'),
   },
   {
     id: 'image-resize', title: 'Resize Image', subtitle: 'Change image dimensions', category: 'image', tint: 'blue', icon: 'resize',
     accept: ['image/*'], multi: true,
     options: [
       {key: 'by', label: 'Resize by', kind: 'segment', def: 'percent', choices: [{value: 'percent', label: 'Percent'}, {value: 'pixels', label: 'Pixels'}]},
-      {key: 'scale', label: 'Size', kind: 'slider', min: 10, max: 95, step: 5, def: 50, format: v => `${v}%`, show: o => o.by === 'percent'},
+      {key: 'scale', label: 'Size', kind: 'slider', min: 10, max: 200, step: 5, def: 50, format: v => `${v}%`, show: o => o.by === 'percent'},
       {key: 'width', label: 'Width (px)', kind: 'number', placeholder: 'Auto', show: o => o.by === 'pixels'},
       {key: 'height', label: 'Height (px)', kind: 'number', placeholder: 'Auto', show: o => o.by === 'pixels'},
       {key: 'keepAspect', label: 'Keep proportions', kind: 'switch', def: true, show: o => o.by === 'pixels'},
       imageFormat('same', true),
     ],
-    run: c => M.image(c.files, {...c.o, scale: c.o.by === 'percent' ? c.o.scale : undefined, width: c.o.by === 'pixels' ? c.o.width : undefined, height: c.o.by === 'pixels' ? c.o.height : undefined, quality: 92}, 'resized', c.progress),
+    note: 'Over 100% enlarges the picture. Sizes go from 1 to 10000 px.',
+    ...imageTool(
+      'resized',
+      o => ({...o, scale: o.by === 'percent' ? o.scale : undefined, width: o.by === 'pixels' ? o.width : undefined, height: o.by === 'pixels' ? o.height : undefined, quality: 92}),
+      'result',
+    ),
   },
   {
     id: 'image-compress', title: 'Compress Image', subtitle: 'Reduce image file size', category: 'image', tint: 'purple', icon: 'compress',
@@ -320,48 +332,48 @@ export const TOOLS: Tool[] = [
       {key: 'maxEdge', label: 'Longest side', kind: 'segment', def: 0, choices: [{value: 0, label: 'Keep'}, {value: 2560, label: '2560'}, {value: 1920, label: '1920'}, {value: 1280, label: '1280'}]},
       {key: 'format', label: 'Save as', kind: 'segment', def: 'jpg', choices: [{value: 'jpg', label: 'JPG'}, {value: 'webp', label: 'WEBP'}]},
     ],
-    run: c => M.image(c.files, c.o, 'compressed', c.progress),
+    ...imageTool('compressed', o => o, 'compare'),
   },
   {
-    id: 'image-crop', title: 'Crop Image', subtitle: 'Crop to a shape', category: 'image', tint: 'teal', icon: 'crop',
+    id: 'image-crop', title: 'Crop Image', subtitle: 'Crop to any shape', category: 'image', tint: 'teal', icon: 'crop',
     accept: ['image/*'], multi: true,
-    options: [
-      {key: 'aspect', label: 'Shape', kind: 'segment', def: '1:1', choices: [
-        {value: '1:1', label: 'Square'}, {value: '4:3', label: '4:3'}, {value: '3:4', label: '3:4'}, {value: '16:9', label: '16:9'}, {value: '9:16', label: '9:16'},
-      ]},
-      imageFormat('same', true),
-    ],
-    note: 'Crops from the centre of the picture.',
-    run: c => M.image(c.files, {...c.o, quality: 92}, 'cropped', c.progress),
+    options: [{key: 'crop', label: 'Crop', kind: 'crop'}, imageFormat('same', true)],
+    note: 'Drag the corners or edges of the box, or the box itself. With several pictures, the same part of each is kept.',
+    // The crop box shows its own picture and result, so no separate preview.
+    ...imageTool('cropped', o => ({format: o.format, rotate: o.rotate, crop: o.crop, quality: 92})),
   },
   {
     id: 'image-rotate', title: 'Rotate Image', subtitle: 'Rotate left or right', category: 'image', tint: 'pink', icon: 'rotate',
     accept: ['image/*'], multi: true,
     options: [{key: 'rotate', label: 'Rotate', kind: 'segment', def: 90, choices: [{value: 90, label: '90° right'}, {value: 180, label: '180°'}, {value: 270, label: '90° left'}]}],
-    run: c => M.image(c.files, {...c.o, format: 'same', quality: 95}, 'rotated', c.progress),
+    ...imageTool('rotated', o => ({...o, format: 'same', quality: 95}), 'result'),
   },
   {
     id: 'image-flip', title: 'Flip Image', subtitle: 'Mirror horizontally or vertically', category: 'image', tint: 'indigo', icon: 'flip',
     accept: ['image/*'], multi: true,
     options: [{key: 'flip', label: 'Flip', kind: 'segment', def: 'h', choices: [{value: 'h', label: 'Horizontal'}, {value: 'v', label: 'Vertical'}]}],
-    run: c => M.image(c.files, {...c.o, format: 'same', quality: 95}, 'flipped', c.progress),
+    ...imageTool('flipped', o => ({...o, format: 'same', quality: 95}), 'result'),
   },
   {
-    id: 'image-resolution', title: 'Change Resolution', subtitle: 'HD, Full HD, 4K and more', category: 'image', tint: 'orange', icon: 'monitor',
+    id: 'image-resolution', title: 'Change Resolution', subtitle: 'Pixel size or DPI', category: 'image', tint: 'orange', icon: 'monitor',
     accept: ['image/*'], multi: true,
     options: [
-      {key: 'maxEdge', label: 'Longest side', kind: 'segment', def: 1920, choices: [
+      {key: 'mode', label: 'Change', kind: 'segment', def: 'pixels', choices: [{value: 'pixels', label: 'Pixel size'}, {value: 'dpi', label: 'DPI only'}]},
+      {key: 'maxEdge', label: 'Longest side', kind: 'segment', def: 1920, show: o => o.mode !== 'dpi', choices: [
         {value: 640, label: '640'}, {value: 1280, label: 'HD'}, {value: 1920, label: 'Full HD'}, {value: 2560, label: '2K'}, {value: 3840, label: '4K'},
       ]},
-      imageFormat('same', true),
+      {key: 'dpi', label: 'Dots per inch', kind: 'segment', def: 300, show: o => o.mode === 'dpi', choices: [
+        {value: 72, label: '72'}, {value: 96, label: '96'}, {value: 150, label: '150'}, {value: 300, label: '300'}, {value: 600, label: '600'},
+      ]},
+      {...imageFormat('same', true), show: o => o.mode !== 'dpi'},
     ],
-    note: 'Pictures are scaled down to fit. A smaller picture is not enlarged.',
-    run: c => M.image(c.files, {...c.o, quality: 92}, 'resized', c.progress),
+    note: 'Pixel size scales the picture down to fit the longest side; a smaller picture is not enlarged. DPI only changes the print size stored in a JPG or PNG: the pixels and quality stay exactly as they are.',
+    ...imageTool('resized', o => (o.mode === 'dpi' ? {dpiOnly: true, dpi: o.dpi} : {maxEdge: o.maxEdge, format: o.format, quality: 92}), 'result'),
   },
   {
     id: 'image-grayscale', title: 'Black & White', subtitle: 'Turn photos grayscale', category: 'image', tint: 'sky', icon: 'gray',
     accept: ['image/*'], multi: true,
-    run: c => M.image(c.files, {format: 'same', quality: 92, grayscale: true}, 'bw', c.progress),
+    ...imageTool('bw', () => ({format: 'same', quality: 92, grayscale: true}), 'compare'),
   },
   {
     id: 'image-ocr', title: 'Image to Text (OCR)', subtitle: 'Extract text from images', category: 'image', tint: 'blue', icon: 'scan',

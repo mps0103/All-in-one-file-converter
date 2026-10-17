@@ -36,6 +36,19 @@ class WorkbenchModule(private val ctx: ReactApplicationContext) : ReactContextBa
     private val workDir: File
         get() = File(ctx.cacheDir, "work").apply { mkdirs() }
 
+    /**
+     * "dark" or "light": the home-screen icon to show. Called by JS as the app goes
+     * to the background, and only switches when the other one is showing.
+     */
+    @ReactMethod
+    fun setLauncherIcon(which: String) {
+        try {
+            LauncherIcon.set(ctx, which != "light")
+        } catch (_: Exception) {
+            // Some launchers or work profiles refuse component changes; the icon simply stays.
+        }
+    }
+
     // ------------------------------------------------------------------ input
 
     @ReactMethod

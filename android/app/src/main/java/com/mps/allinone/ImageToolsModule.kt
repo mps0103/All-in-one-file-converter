@@ -28,9 +28,20 @@ import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
+import java.io.DataInputStream
+import java.io.DataOutputStream
+import java.io.EOFException
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.InputStream
+import java.io.OutputStream
+import java.nio.ByteBuffer
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import java.util.zip.CRC32
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
@@ -58,11 +69,15 @@ class ImageToolsModule(private val ctx: ReactApplicationContext) : ReactContextB
      *  format   "jpg" | "png" | "webp" | "same"
      *  quality  1..100 (jpg / webp)
      *  maxEdge  longest side in px, 0 = keep
-     *  width / height  exact size in px; with keepAspect the other side follows
-     *  scale    percent, 1..100
+     *  width / height  exact size in px, 1..10000; with keepAspect a missing side
+     *           follows the picture's shape, and two sides are a box it fits inside
+     *  scale    percent of the picture itself, 1..1000 (over 100 enlarges)
      *  rotate   0 | 90 | 180 | 270
      *  flipH / flipV / grayscale  booleans
      *  aspect   "1:1" | "4:3" | "3:4" | "16:9" | "9:16" | "3:2" | "2:3" — centre crop
+     *  crop     {x, y, w, h} as fractions of the upright picture after rotate/flip
+     *  dpi      dots per inch written into a JPEG (JFIF) or PNG (pHYs)
+     *  dpiOnly  the pixels stay as they are: the file is copied and only its DPI changes
      *  outPath  where to write
      */
     @ReactMethod
@@ -71,55 +86,26 @@ class ImageToolsModule(private val ctx: ReactApplicationContext) : ReactContextB
             var bmp: Bitmap? = null
             try {
                 val outPath = opts.str("outPath") ?: throw IllegalArgumentException("No output path.")
-                val srcMime = ctx.contentResolver.getType(Uri.parse(uriString)) ?: ""
-                val (srcW, srcH) = sourceSize(uriString)
-                val srcLong = max(srcW, srcH)
-                val edge = decodeEdge(srcW, srcH, opts)
-                // A "keep the size" job is decoded straight to its final size; any other
-                // job only as close to its target as sampling gets, and scaled below.
-                bmp = decode(uriString, edge, exact = edge == min(srcLong, KEEP_EDGE))
-                // Decoded pixels per source pixel, so a percentage is of the photo itself.
-                val sourceScale = if (srcLong > 0) max(bmp.width, bmp.height).toFloat() / srcLong else 1f
-
-                val aspect = opts.str("aspect")
-                if (!aspect.isNullOrBlank() && aspect != "free") bmp = centreCrop(bmp, aspect)
-
-                val rotate = opts.int("rotate", 0)
-                val flipH = opts.bool("flipH")
-                val flipV = opts.bool("flipV")
-                if (rotate != 0 || flipH || flipV) {
-                    val m = Matrix()
-                    if (rotate != 0) m.postRotate(rotate.toFloat())
-                    if (flipH || flipV) m.postScale(if (flipH) -1f else 1f, if (flipV) -1f else 1f)
-                    bmp = replace(bmp, Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true))
-                }
-
-                val (tw, th) = targetSize(bmp.width, bmp.height, opts, sourceScale)
-                if (tw != bmp.width || th != bmp.height) {
-                    bmp = replace(bmp, Bitmap.createScaledBitmap(bmp, tw, th, true))
-                }
-
-                if (opts.bool("grayscale")) bmp = grayscale(bmp)
-
-                val format = when (val f = opts.str("format") ?: "same") {
-                    "same" -> when {
-                        srcMime.contains("png") -> "png"
-                        srcMime.contains("webp") -> "webp"
-                        else -> "jpg"
-                    }
-                    else -> f
-                }
-                val quality = opts.int("quality", 90).coerceIn(1, 100)
                 val out = File(outPath).apply { parentFile?.mkdirs() }
-                write(bmp, format, quality, out)
+                val plan = plan(uriString, opts)
+                val dpi = opts.int("dpi", 0)
 
-                promise.resolve(Arguments.createMap().apply {
-                    putString("path", out.absolutePath)
-                    putInt("width", bmp.width)
-                    putInt("height", bmp.height)
-                    putDouble("size", out.length().toDouble())
-                    putString("format", format)
-                })
+                if (opts.bool("dpiOnly")) {
+                    // Not re-encoded at all: same pixels, same quality, a new DPI field.
+                    val format = sourceFormat(uriString)
+                    ctx.contentResolver.openInputStream(toUri(uriString))?.use { input ->
+                        FileOutputStream(out).use { copyWithDpi(input, format, it, dpi) }
+                    } ?: throw IllegalStateException("This image could not be read.")
+                    if (format == "jpg") matchExifDpi(out, dpi)
+                    promise.resolve(result(out, plan.uprightW, plan.uprightH, format))
+                    return@execute
+                }
+
+                bmp = render(uriString, opts, plan, plan.outW, plan.outH, plan.decodeEdge, exact = plan.decodeEdge == min(plan.srcLong, KEEP_EDGE))
+                val format = outFormat(uriString, opts)
+                write(bmp, format, opts.int("quality", 90).coerceIn(1, 100), out)
+                if (dpi > 0 && (format == "jpg" || format == "png")) setDpi(out, format, dpi)
+                promise.resolve(result(out, bmp.width, bmp.height, format))
             } catch (e: OutOfMemoryError) {
                 promise.reject("E_MEMORY", "This image is too large for the phone's memory. Try a smaller size.")
             } catch (e: Exception) {
@@ -128,6 +114,82 @@ class ImageToolsModule(private val ctx: ReactApplicationContext) : ReactContextB
                 bmp?.recycle()
             }
         }
+    }
+
+    /**
+     * The job process() would do, drawn no larger than maxSide and written to the
+     * cache in the job's own format and quality, so what is shown is what will be
+     * saved. Resolves {uri, width, height, outWidth, outHeight, estimatedBytes,
+     * srcWidth, srcHeight, exact}: out* is the real job's size, and when the job fits
+     * inside maxSide the preview is the job itself (exact) and so is its size.
+     *
+     * opts.slot names the preview (one screen can show more than one); a newer
+     * request for the same slot makes an older one still waiting resolve null, and
+     * replaces its file.
+     */
+    @ReactMethod
+    fun preview(uriString: String, opts: ReadableMap, maxSide: Int, promise: Promise) {
+        val slot = (opts.str("slot") ?: "main").filter { it.isLetterOrDigit() }.ifEmpty { "main" }
+        val gen = previewGen.merge(slot, 1, Int::plus)
+        worker.execute {
+            if (previewGen[slot] != gen) {
+                promise.resolve(null)
+                return@execute
+            }
+            var bmp: Bitmap? = null
+            try {
+                val plan = plan(uriString, opts)
+                val p = min(1.0, maxSide.coerceIn(64, 2048).toDouble() / max(plan.outW, plan.outH))
+                val pw = max(1, (plan.outW * p).roundToInt())
+                val ph = max(1, (plan.outH * p).roundToInt())
+                bmp = render(uriString, opts, plan, pw, ph, max(1, ceil(plan.decodeEdge * p).toInt()), exact = false)
+                val format = if (opts.bool("dpiOnly")) sourceFormat(uriString) else outFormat(uriString, opts)
+                val dir = File(ctx.cacheDir, PREVIEW_DIR).apply { mkdirs() }
+                dir.listFiles()?.forEach { if (it.name.startsWith("$slot-")) it.delete() }
+                val out = File(dir, "$slot-${System.nanoTime()}.${if (format == "jpg") "jpg" else format}")
+                write(bmp, format, opts.int("quality", 90).coerceIn(1, 100), out)
+                val estimate = when {
+                    opts.bool("dpiOnly") -> sourceBytes(uriString).toDouble()
+                    p >= 1.0 -> out.length().toDouble()
+                    // Scaled up from the preview by pixel count: close enough for a guide.
+                    else -> out.length() * (plan.outW.toDouble() * plan.outH) / (pw.toDouble() * ph)
+                }
+                promise.resolve(Arguments.createMap().apply {
+                    putString("uri", Uri.fromFile(out).toString())
+                    putInt("width", pw)
+                    putInt("height", ph)
+                    putInt("outWidth", plan.outW)
+                    putInt("outHeight", plan.outH)
+                    putDouble("estimatedBytes", estimate)
+                    putInt("srcWidth", plan.uprightW)
+                    putInt("srcHeight", plan.uprightH)
+                    putBoolean("exact", p >= 1.0)
+                })
+            } catch (e: OutOfMemoryError) {
+                promise.reject("E_MEMORY", "This picture is too large to preview.")
+            } catch (e: Exception) {
+                promise.reject("E_IMAGE", e.message ?: "Could not preview the image.", e)
+            } finally {
+                bmp?.recycle()
+            }
+        }
+    }
+
+    /** The screen showing previews has closed: their files go. */
+    @ReactMethod
+    fun clearPreviews() {
+        previewGen.clear()
+        worker.execute { File(ctx.cacheDir, PREVIEW_DIR).listFiles()?.forEach { it.delete() } }
+    }
+
+    private val previewGen = ConcurrentHashMap<String, Int>()
+
+    private fun result(out: File, w: Int, h: Int, format: String) = Arguments.createMap().apply {
+        putString("path", out.absolutePath)
+        putInt("width", w)
+        putInt("height", h)
+        putDouble("size", out.length().toDouble())
+        putString("format", format)
     }
 
     /**
@@ -226,42 +288,308 @@ class ImageToolsModule(private val ctx: ReactApplicationContext) : ReactContextB
     }
 
     /**
-     * The long side to decode at: what the job will write, and no more. Never above
-     * KEEP_EDGE (~19 MP), which is as large as any photo is ever kept.
+     * What a job makes, worked out from the picture's header alone, before anything
+     * is decoded: the upright source size, the exact output size, and the long side
+     * to decode at so the output is never drawn from fewer pixels than it has.
      */
-    private fun decodeEdge(srcW: Int, srcH: Int, opts: ReadableMap): Int {
-        val srcLong = max(srcW, srcH)
-        if (srcLong <= 0) {
-            // Size unknown: the old rule, twice any asked-for size.
-            val explicit = max(opts.int("width", 0), opts.int("height", 0))
-            val edge = opts.int("maxEdge", 0)
-            return when {
-                explicit > 0 -> explicit * 2
-                edge > 0 -> edge * 2
-                else -> KEEP_EDGE
-            }
-        }
-        // Tried with the photo either way up: EXIF rotation can swap its sides.
-        val need = max(neededScale(srcW, srcH, opts), neededScale(srcH, srcW, opts))
-        val edge = if (need >= 1f) srcLong else ceil(srcLong * need).toInt()
-        return edge.coerceIn(1, min(srcLong, KEEP_EDGE))
-    }
+    private class Plan(val srcLong: Int, val uprightW: Int, val uprightH: Int, val outW: Int, val outH: Int, val decodeEdge: Int)
 
-    /** Output size over source size for a w×h source. */
-    private fun neededScale(w: Int, h: Int, opts: ReadableMap): Float {
-        // Sized at a nominal 10 000 px long side, so a job is worked out without decoding
-        // anything and the integer maths keeps its precision; k is nominal px per real px.
-        val k = 10_000f / max(w, h)
-        var cw = (w * k).roundToInt().coerceAtLeast(1)
-        var ch = (h * k).roundToInt().coerceAtLeast(1)
-        val aspect = opts.str("aspect")
-        if (!aspect.isNullOrBlank() && aspect != "free") {
-            cropSize(cw, ch, aspect)?.let { (a, b) -> cw = a; ch = b }
-        }
+    private fun plan(uriString: String, opts: ReadableMap): Plan {
+        val (uw, uh) = uprightSize(uriString)
+        val srcLong = max(uw, uh)
+        // The part of the picture that is kept, in source pixels, in the order render()
+        // works: centre crop to an aspect, rotate, then the crop box.
+        var cw = uw.toDouble()
+        var ch = uh.toDouble()
+        aspectOf(opts.str("aspect"))?.let { want -> if (cw / ch > want) cw = ch * want else ch = cw / want }
         val rotate = opts.int("rotate", 0)
         if (rotate == 90 || rotate == 270) cw = ch.also { ch = cw }
-        val (tw, th) = targetSize(cw, ch, opts, 1f, px = k)
-        return max(tw.toFloat() / cw, th.toFloat() / ch)
+        cropBox(opts)?.let { r ->
+            cw *= r.width()
+            ch *= r.height()
+        }
+        val (ow, oh) = if (opts.bool("dpiOnly")) uw to uh else outSize(cw, ch, srcLong, opts)
+        if (ow > MAX_SIDE || oh > MAX_SIDE || ow.toLong() * oh > MAX_PIXELS) {
+            throw IllegalArgumentException("$ow × $oh px is larger than this phone can make. Pick a smaller size.")
+        }
+        // Output pixels per source pixel; below 1 the picture is decoded only that large.
+        val f = max(ow / cw, oh / ch)
+        val edge = ceil(srcLong * min(1.0, f) - 1e-6).toInt().coerceIn(1, srcLong)
+        return Plan(srcLong, uw, uh, ow, oh, edge)
+    }
+
+    /** The output size for a kept part of cw × ch source pixels. */
+    private fun outSize(cw: Double, ch: Double, srcLong: Int, opts: ReadableMap): Pair<Int, Int> {
+        fun px(v: Double) = max(1, v.roundToInt())
+        val ew = opts.int("width", 0).coerceIn(0, MAX_SIDE)
+        val eh = opts.int("height", 0).coerceIn(0, MAX_SIDE)
+        val keep = !opts.hasKey("keepAspect") || opts.bool("keepAspect")
+        if (ew > 0 || eh > 0) {
+            return when {
+                // Proportions off: exactly what was typed.
+                ew > 0 && eh > 0 && !keep -> ew to eh
+                // Proportions on and both typed: the largest size that fits the box.
+                ew > 0 && eh > 0 -> min(ew / cw, eh / ch).let { s -> px(cw * s) to px(ch * s) }
+                // One side typed: the other follows the picture's own shape.
+                ew > 0 -> ew to px(ch * ew / cw)
+                else -> px(cw * eh / ch) to eh
+            }
+        }
+        val pct = opts.int("scale", 100).coerceIn(1, 1000)
+        if (pct != 100) return px(cw * pct / 100.0) to px(ch * pct / 100.0)
+        val edge = opts.int("maxEdge", 0)
+        if (edge > 0 && max(cw, ch) > edge) {
+            val s = edge / max(cw, ch)
+            return px(cw * s) to px(ch * s)
+        }
+        // Kept at its size, up to KEEP_EDGE on the source's long side.
+        val k = min(1.0, KEEP_EDGE.toDouble() / srcLong)
+        return px(cw * k) to px(ch * k)
+    }
+
+    /**
+     * Decodes and does the job at outW × outH: centre crop, rotate/flip, crop box,
+     * then one filtered scale to exactly the size asked for, then grey.
+     */
+    private fun render(uriString: String, opts: ReadableMap, plan: Plan, outW: Int, outH: Int, edge: Int, exact: Boolean): Bitmap {
+        var bmp = decode(uriString, edge, exact)
+        try {
+            val aspect = opts.str("aspect")
+            if (aspectOf(aspect) != null) bmp = centreCrop(bmp, aspect!!)
+
+            val rotate = opts.int("rotate", 0)
+            val flipH = opts.bool("flipH")
+            val flipV = opts.bool("flipV")
+            if (rotate != 0 || flipH || flipV) {
+                val m = Matrix()
+                if (rotate != 0) m.postRotate(rotate.toFloat())
+                if (flipH || flipV) m.postScale(if (flipH) -1f else 1f, if (flipV) -1f else 1f)
+                bmp = replace(bmp, Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true))
+            }
+
+            cropBox(opts)?.let { r ->
+                val x = (r.left * bmp.width).roundToInt().coerceIn(0, bmp.width - 1)
+                val y = (r.top * bmp.height).roundToInt().coerceIn(0, bmp.height - 1)
+                val w = (r.width() * bmp.width).roundToInt().coerceIn(1, bmp.width - x)
+                val h = (r.height() * bmp.height).roundToInt().coerceIn(1, bmp.height - y)
+                bmp = replace(bmp, Bitmap.createBitmap(bmp, x, y, w, h))
+            }
+
+            if (outW != bmp.width || outH != bmp.height) bmp = replace(bmp, Bitmap.createScaledBitmap(bmp, outW, outH, true))
+            if (opts.bool("grayscale")) bmp = grayscale(bmp)
+            return bmp
+        } catch (e: Throwable) {
+            bmp.recycle()
+            throw e
+        }
+    }
+
+    /** The picture's width and height as it is seen, EXIF rotation applied. */
+    private fun uprightSize(uriString: String): Pair<Int, Int> {
+        val (sw, sh) = sourceSize(uriString)
+        if (sw > 0 && sh > 0) return if (exifOrientation(toUri(uriString)) in SWAPPING) sh to sw else sw to sh
+        // A format BitmapFactory cannot size (some HEIF): a thumbnail-sized decode tells.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) throw IllegalStateException("This image format is not supported on this phone.")
+        var w = 0
+        var h = 0
+        val tiny = ImageDecoder.decodeBitmap(ImageDecoder.createSource(ctx.contentResolver, toUri(uriString))) { d, info, _ ->
+            w = info.size.width
+            h = info.size.height
+            d.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+            d.setTargetSampleSize(max(1, max(w, h) / 64))
+        }
+        val turned = w != h && (tiny.width > tiny.height) != (w > h)
+        tiny.recycle()
+        if (w <= 0 || h <= 0) throw IllegalStateException("This image could not be read.")
+        return if (turned) h to w else w to h
+    }
+
+    private fun aspectOf(aspect: String?): Double? {
+        if (aspect.isNullOrBlank() || aspect == "free") return null
+        val parts = aspect.split(":").mapNotNull { it.toDoubleOrNull() }
+        if (parts.size != 2 || parts[0] <= 0 || parts[1] <= 0) return null
+        return parts[0] / parts[1]
+    }
+
+    /** The crop box as fractions of the upright, rotated picture; null for none. */
+    private fun cropBox(opts: ReadableMap): RectF? {
+        if (!opts.hasKey("crop") || opts.isNull("crop")) return null
+        val m = opts.getMap("crop") ?: return null
+        fun d(k: String, def: Double) = if (m.hasKey(k) && !m.isNull(k)) m.getDouble(k) else def
+        val x = d("x", 0.0).coerceIn(0.0, 0.999)
+        val y = d("y", 0.0).coerceIn(0.0, 0.999)
+        val w = d("w", 1.0).coerceIn(0.001, 1.0 - x)
+        val h = d("h", 1.0).coerceIn(0.001, 1.0 - y)
+        if (x <= 0.0005 && y <= 0.0005 && w >= 0.9995 && h >= 0.9995) return null
+        return RectF(x.toFloat(), y.toFloat(), (x + w).toFloat(), (y + h).toFloat())
+    }
+
+    private fun outFormat(uriString: String, opts: ReadableMap): String = when (val f = opts.str("format") ?: "same") {
+        "same" -> sourceFormat(uriString).let { if (it == "png" || it == "webp") it else "jpg" }
+        else -> f
+    }
+
+    /** jpg, png or webp from the file's own first bytes (a file:// uri has no MIME type). */
+    private fun sourceFormat(uriString: String): String {
+        val head = ByteArray(12)
+        val n = try {
+            ctx.contentResolver.openInputStream(toUri(uriString))?.use { readUpTo(it, head) } ?: 0
+        } catch (_: Exception) {
+            0
+        }
+        return when {
+            n >= 3 && head[0] == 0xFF.toByte() && head[1] == 0xD8.toByte() -> "jpg"
+            n >= 8 && head[0] == 0x89.toByte() && head[1] == 'P'.code.toByte() && head[2] == 'N'.code.toByte() -> "png"
+            n >= 12 && String(head, 0, 4, Charsets.US_ASCII) == "RIFF" && String(head, 8, 4, Charsets.US_ASCII) == "WEBP" -> "webp"
+            else -> {
+                val mime = ctx.contentResolver.getType(toUri(uriString)) ?: ""
+                when {
+                    mime.contains("png") -> "png"
+                    mime.contains("webp") -> "webp"
+                    else -> "other"
+                }
+            }
+        }
+    }
+
+    private fun readUpTo(s: InputStream, buf: ByteArray): Int {
+        var n = 0
+        while (n < buf.size) {
+            val r = s.read(buf, n, buf.size - n)
+            if (r < 0) break
+            n += r
+        }
+        return n
+    }
+
+    private fun sourceBytes(uriString: String): Long = try {
+        ctx.contentResolver.openAssetFileDescriptor(toUri(uriString), "r")?.use { it.length } ?: 0L
+    } catch (_: Exception) {
+        0L
+    }
+
+    // ------------------------------------------------------------------- DPI
+
+    /** Rewrites a saved JPEG or PNG in place with a new DPI field. */
+    private fun setDpi(file: File, format: String, dpi: Int) {
+        val tmp = File(file.path + ".dpi")
+        FileInputStream(file).use { input -> FileOutputStream(tmp).use { copyWithDpi(input, format, it, dpi) } }
+        if (!tmp.renameTo(file)) {
+            tmp.delete()
+            throw IllegalStateException("Could not save the DPI setting.")
+        }
+    }
+
+    /**
+     * Streams a JPEG or PNG to out with its dots per inch set, every other byte as
+     * it was: the JFIF header of a JPEG (added when the file has none) or the pHYs
+     * chunk of a PNG. A camera JPEG's EXIF resolution is set to match afterwards.
+     */
+    private fun copyWithDpi(input: InputStream, format: String, out: OutputStream, dpi: Int) {
+        if (dpi !in 1..65535) throw IllegalArgumentException("Pick a DPI between 1 and 65535.")
+        val i = DataInputStream(BufferedInputStream(input, 64 * 1024))
+        val o = DataOutputStream(BufferedOutputStream(out, 64 * 1024))
+        when (format) {
+            "jpg" -> jpegWithDpi(i, o, dpi)
+            "png" -> pngWithDpi(i, o, dpi)
+            else -> throw IllegalArgumentException("Only JPG and PNG pictures carry a DPI setting.")
+        }
+        o.flush()
+    }
+
+    private fun jpegWithDpi(i: DataInputStream, o: DataOutputStream, dpi: Int) {
+        if (i.readUnsignedShort() != 0xFFD8) throw IllegalStateException("This is not a JPEG file.")
+        o.writeShort(0xFFD8)
+        val marker = i.readUnsignedShort()
+        if (marker == 0xFFE0) {
+            val len = i.readUnsignedShort()
+            val data = ByteArray(len - 2).also { i.readFully(it) }
+            if (len >= 16 && String(data, 0, 5, Charsets.ISO_8859_1) == "JFIF\u0000") {
+                // units 1 = dots per inch, then X and Y density.
+                data[7] = 1
+                data[8] = (dpi shr 8).toByte(); data[9] = dpi.toByte()
+                data[10] = (dpi shr 8).toByte(); data[11] = dpi.toByte()
+            } else {
+                writeJfif(o, dpi)
+            }
+            o.writeShort(0xFFE0)
+            o.writeShort(len)
+            o.write(data)
+        } else {
+            // No JFIF header (camera photos start with EXIF): one goes first, as the format wants.
+            writeJfif(o, dpi)
+            o.writeShort(marker)
+        }
+        i.copyTo(o, 64 * 1024)
+    }
+
+    /**
+     * A camera photo also states its resolution in EXIF (usually 72), which Windows
+     * and print dialogs read before JFIF; it is set to the same. A photo with no
+     * EXIF block is left without one.
+     */
+    private fun matchExifDpi(file: File, dpi: Int) {
+        try {
+            val exif = ExifInterface(file)
+            if (exif.getAttribute(ExifInterface.TAG_X_RESOLUTION) == null) return
+            exif.setAttribute(ExifInterface.TAG_X_RESOLUTION, "$dpi/1")
+            exif.setAttribute(ExifInterface.TAG_Y_RESOLUTION, "$dpi/1")
+            exif.setAttribute(ExifInterface.TAG_RESOLUTION_UNIT, "2") // inches
+            exif.saveAttributes()
+        } catch (_: Exception) {
+            // The JFIF field is already set; EXIF is a second copy of it.
+        }
+    }
+
+    private fun writeJfif(o: DataOutputStream, dpi: Int) {
+        o.writeShort(0xFFE0)
+        o.writeShort(16)
+        o.write("JFIF\u0000".toByteArray(Charsets.ISO_8859_1))
+        o.writeShort(0x0101) // version 1.01
+        o.writeByte(1) // dots per inch
+        o.writeShort(dpi)
+        o.writeShort(dpi)
+        o.writeShort(0) // no thumbnail
+    }
+
+    private fun pngWithDpi(i: DataInputStream, o: DataOutputStream, dpi: Int) {
+        val sig = ByteArray(8).also { i.readFully(it) }
+        if (sig[1] != 'P'.code.toByte() || sig[2] != 'N'.code.toByte()) throw IllegalStateException("This is not a PNG file.")
+        o.write(sig)
+        val buf = ByteArray(64 * 1024)
+        var placed = false
+        while (true) {
+            val len = try { i.readInt() } catch (_: EOFException) { break }
+            val type = ByteArray(4).also { i.readFully(it) }
+            val name = String(type, Charsets.US_ASCII)
+            var left = len.toLong() + 4 // data and CRC
+            if (name == "pHYs") {
+                // The old one is dropped; the new one is written straight after IHDR.
+                while (left > 0) left -= i.read(buf, 0, min(buf.size.toLong(), left).toInt()).also { if (it < 0) throw EOFException() }
+                continue
+            }
+            if (!placed && name != "IHDR") {
+                writePhys(o, dpi)
+                placed = true
+            }
+            o.writeInt(len)
+            o.write(type)
+            while (left > 0) {
+                val n = i.read(buf, 0, min(buf.size.toLong(), left).toInt())
+                if (n < 0) throw EOFException()
+                o.write(buf, 0, n)
+                left -= n
+            }
+            if (name == "IEND") break
+        }
+    }
+
+    private fun writePhys(o: DataOutputStream, dpi: Int) {
+        val ppm = (dpi / 0.0254).roundToInt()
+        val chunk = ByteBuffer.allocate(13).put("pHYs".toByteArray(Charsets.US_ASCII)).putInt(ppm).putInt(ppm).put(1).array()
+        o.writeInt(9)
+        o.write(chunk)
+        o.writeInt(CRC32().apply { update(chunk) }.value.toInt())
     }
 
     /**
@@ -419,43 +747,6 @@ class ImageToolsModule(private val ctx: ReactApplicationContext) : ReactContextB
         return replace(bmp, Bitmap.createScaledBitmap(bmp, max(1, (bmp.width * s).roundToInt()), max(1, (bmp.height * s).roundToInt()), true))
     }
 
-    /**
-     * sourceScale is decoded pixels per source pixel, so a percentage means a share
-     * of the photo itself rather than of the copy in memory. px converts a requested
-     * size in real pixels to the units of w and h (1 except when sizing a job ahead).
-     */
-    private fun targetSize(w: Int, h: Int, opts: ReadableMap, sourceScale: Float, px: Float = 1f): Pair<Int, Int> {
-        val ew = opts.int("width", 0)
-        val eh = opts.int("height", 0)
-        val keep = !opts.hasKey("keepAspect") || opts.bool("keepAspect")
-        if (ew > 0 || eh > 0) {
-            val rw = ew * px
-            val rh = eh * px
-            return when {
-                ew > 0 && eh > 0 && !keep -> max(1, rw.roundToInt()) to max(1, rh.roundToInt())
-                ew > 0 && eh > 0 -> {
-                    val s = min(rw / w, rh / h)
-                    max(1, (w * s).roundToInt()) to max(1, (h * s).roundToInt())
-                }
-                ew > 0 -> max(1, rw.roundToInt()) to max(1, (h * rw / w).roundToInt())
-                else -> max(1, (w * rh / h).roundToInt()) to max(1, rh.roundToInt())
-            }
-        }
-        val pct = opts.int("scale", 100)
-        if (pct in 1..99) {
-            // Never above the decoded copy: a percentage of a photo larger than
-            // KEEP_EDGE stops at KEEP_EDGE rather than being blown back up.
-            val s = min(1f, pct / 100f / sourceScale)
-            return max(1, (w * s).roundToInt()) to max(1, (h * s).roundToInt())
-        }
-        val edge = opts.int("maxEdge", 0) * px
-        if (edge > 0 && max(w, h) > edge) {
-            val s = edge / max(w, h)
-            return max(1, (w * s).roundToInt()) to max(1, (h * s).roundToInt())
-        }
-        return w to h
-    }
-
     private fun cropSize(w: Int, h: Int, aspect: String): Pair<Int, Int>? {
         val parts = aspect.split(":").mapNotNull { it.toFloatOrNull() }
         if (parts.size != 2 || parts[0] <= 0 || parts[1] <= 0) return null
@@ -553,6 +844,11 @@ class ImageToolsModule(private val ctx: ReactApplicationContext) : ReactContextB
         const val BANDED_MIN_PIXELS = 8_000_000L
         /** Size of one band of a banded decode. */
         const val BAND_BYTES = 8L * 1024 * 1024
+        /** Largest side the app makes, as the size fields allow. */
+        const val MAX_SIDE = 10_000
+        /** 50 MP, 200 MB as a bitmap: the most this app holds for one picture. */
+        const val MAX_PIXELS = 50_000_000L
+        const val PREVIEW_DIR = "imgpreview"
         val SWAPPING = setOf(
             ExifInterface.ORIENTATION_ROTATE_90,
             ExifInterface.ORIENTATION_ROTATE_270,

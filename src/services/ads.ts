@@ -14,7 +14,7 @@ const isDev = __DEV__;
 
 /**
  * The app shows one kind of ad only: an optional rewarded video, offered when
- * the 10 free conversions are used up. Watching it to the end gives one more
+ * the free conversions are used up. Watching it to the end gives one more
  * conversion. There are no banners and no full-screen ads.
  *
  * Paste the production rewarded unit id here, and the AdMob app id in
