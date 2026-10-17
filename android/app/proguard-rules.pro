@@ -1,59 +1,39 @@
-# R8 runs in full mode (gradle.properties). Libraries that ship their own consumer
-# rules — React Native and Hermes, Media3, ML Kit and its document scanner, Google
-# Mobile Ads — are left to those rules, so R8 can drop the parts this app never
-# calls. Blanket "-keep class lib.** { *; }" lines for them used to keep all of it.
+# R8 runs in full mode (gradle.properties). Every library here is left to the
+# consumer rules it ships (React Native and Hermes, Media3, ML Kit and its document
+# scanner, Google Mobile Ads, Play Billing, PDFBox), so R8 can drop the parts this
+# app never calls. Blanket "-keep class lib.** { *; }" lines used to keep all of it.
 #
 # React Native's rules keep every NativeModule (this app's modules and the
-# document scanner plugin's), every JavaScriptModule, @ReactProp setters, JNI
-# methods and @DoNotStrip members.
+# document scanner plugin's), every JavaScriptModule, @ReactProp setters and
+# @DoNotStrip members. Activities, providers and receivers named in the manifest
+# are kept by the rules AAPT writes for it.
 
-# This app's own code is small and reached from JS by name; kept whole.
--keep class com.mps.allinone.** { *; }
+# JNI functions are bound by class and method name (Java_com_mps_allinone_Mp3Encoder_*),
+# so classes with native methods keep their names. The MP3 encoder's C code never
+# calls back into Java, so nothing more of it needs keeping.
+-keepclasseswithmembernames class * { native <methods>; }
 
-# The MP3 encoder's JNI functions are bound by class and method name
-# (Java_com_mps_allinone_Mp3Encoder_*), so neither may be renamed.
--keep class com.mps.allinone.Mp3Encoder { native <methods>; }
-
-# Document scanner plugin: two small classes, kept whole. The ML Kit scanner it
-# opens brings its own rules.
--keep class com.documentscanner.** { *; }
-
-# Media3 Transformer and ML Kit text recognition: their own rules are enough.
+# Optional classes the libraries refer to but that are not bundled. Each is only
+# reached on a path this app never takes, so they are not kept, only not warned on.
 -dontwarn androidx.media3.**
 -dontwarn com.google.mlkit.**
-
-# PDFBox for Android pulls in optional AWT and Bouncy Castle classes it can live
-# without. It loads fonts and glyph lists by resource path and some filters by
-# reflection, so it stays whole.
--keep class com.tom_roush.pdfbox.** { *; }
--dontwarn java.awt.**
--dontwarn javax.imageio.**
--dontwarn org.bouncycastle.**
--dontwarn org.apache.commons.logging.**
-
-# PDFBox's JPEG 2000 filter calls an optional decoder that is not bundled. Only
-# JPX-encoded images inside a PDF need it, and those are never decoded here: text
-# is read by PDFBox and pages are drawn by Android's own PdfRenderer.
+-dontwarn com.google.android.gms.**
+# PDFBox: the JPEG 2000 codec, for JPX images inside a PDF; pages are drawn by
+# Android's own PdfRenderer, so they are never decoded here.
 -dontwarn com.gemalto.jp2.JP2Decoder
 -dontwarn com.gemalto.jp2.JP2Encoder
-
-# slf4j looks for a logging binder at runtime and carries on without one.
+# commons-compress: zstd and brotli streams, formats the extractor does not offer.
+-dontwarn com.github.luben.zstd.**
+-dontwarn org.brotli.dec.**
+# slf4j looks for a logging binder at run time and carries on without one.
 -dontwarn org.slf4j.impl.StaticLoggerBinder
--dontwarn org.slf4j.**
 
-# Archive decoders. commons-compress finds some formats by reflection.
--keep class net.lingala.zip4j.** { *; }
--keep class org.apache.commons.compress.** { *; }
--keep class com.github.junrar.** { *; }
--dontwarn org.apache.commons.compress.**
--dontwarn org.brotli.**
--dontwarn com.github.luben.**
--dontwarn org.tukaani.xz.**
+# WorkManager (pulled in by Google Mobile Ads) opens its Room database by building
+# the class name "<Database>_Impl" and calling its no-argument constructor, which
+# R8 full mode would otherwise strip.
+-keep class * extends androidx.room.RoomDatabase { <init>(); }
 
-# Play Billing. The library is reached reflectively by the Play Store app, and its
-# listener callbacks are only ever called from there, so it is kept whole.
--keep class com.android.billingclient.** { *; }
--keep class com.android.vending.billing.** { *; }
-
-# Google Mobile Ads ships its own rules.
--dontwarn com.google.android.gms.**
+# ML Kit (text recognition) builds its parts from the ComponentRegistrar classes
+# named in the manifest, through their no-argument constructors. R8 full mode
+# drops those constructors, and TextRecognition.getClient() then finds nothing.
+-keep class * implements com.google.firebase.components.ComponentRegistrar { <init>(); }

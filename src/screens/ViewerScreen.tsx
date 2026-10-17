@@ -1,6 +1,7 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {
   ActivityIndicator,
+  FlatList,
   Image,
   Modal,
   PixelRatio,
@@ -350,7 +351,7 @@ export function ViewerScreen({route, navigation}: Props) {
   }, [incoming?.uri]);
 
   const pageWidth = width - spacing.lg * 2;
-  const fills = preview?.kind === 'html' || preview?.kind === 'sheet' || preview?.kind === 'image';
+  const fills = preview?.kind === 'html' || preview?.kind === 'sheet' || preview?.kind === 'image' || preview?.kind === 'archive';
 
   const body = () => {
     if (busy) {
@@ -449,15 +450,27 @@ export function ViewerScreen({route, navigation}: Props) {
     }
 
     if (preview.kind === 'archive') {
+      // A FlatList, so an archive of thousands of files mounts only the rows near the screen.
       return (
-        <View>
-          <Text style={[type.caption, {color: t.textMuted, marginBottom: spacing.md, lineHeight: 18}]}>
-            {preview.entries.length} {preview.entries.length === 1 ? 'file' : 'files'} inside, still packed. Extracting saves them into Downloads.
-          </Text>
-          {/* The File Extractor's own screen, so the free allowance is counted the way it always is. */}
-          <GradientButton label="Extract all files" icon="unzip" tint="yellow" onPress={() => navigation.navigate('Tool', {toolId: 'extract-archive', files: [file]})} style={{marginBottom: spacing.md}} />
-          {preview.entries.map((entry, i) => (
-            <Animated.View key={`${entry.name}-${i}`} entering={enter(i, 30)}>
+        <FlatList
+          data={preview.entries}
+          keyExtractor={(entry, i) => `${entry.name}-${i}`}
+          initialNumToRender={12}
+          maxToRenderPerBatch={12}
+          windowSize={5}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.entryList}
+          ListHeaderComponent={
+            <>
+              <Text style={[type.caption, {color: t.textMuted, marginBottom: spacing.md, lineHeight: 18}]}>
+                {preview.entries.length} {preview.entries.length === 1 ? 'file' : 'files'} inside, still packed. Extracting saves them into Downloads.
+              </Text>
+              {/* The File Extractor's own screen, so the free allowance is counted the way it always is. */}
+              <GradientButton label="Extract all files" icon="unzip" tint="yellow" onPress={() => navigation.navigate('Tool', {toolId: 'extract-archive', files: [file]})} style={{marginBottom: spacing.md}} />
+            </>
+          }
+          renderItem={({item: entry, index: i}) => (
+            <Animated.View entering={enter(i, 30)}>
               <Card style={styles.entry}>
                 <View style={[styles.extBadge, {backgroundColor: t.cardAlt}]}>
                   <Text style={[type.caption, {color: t.textMuted, fontWeight: '700'}]} numberOfLines={1}>
@@ -472,8 +485,8 @@ export function ViewerScreen({route, navigation}: Props) {
                 </View>
               </Card>
             </Animated.View>
-          ))}
-        </View>
+          )}
+        />
       );
     }
 
@@ -572,6 +585,8 @@ const styles = StyleSheet.create({
   dropIcon: {width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center'},
   page: {borderRadius: radius.sm, backgroundColor: '#FFFFFF'},
   pageFallback: {borderRadius: radius.sm, borderWidth: StyleSheet.hairlineWidth, alignItems: 'center', justifyContent: 'center'},
+  // The fill area already keeps spacing.md below; together they match the scroll view's 40.
+  entryList: {paddingBottom: 40 - spacing.md},
   entry: {flexDirection: 'row', alignItems: 'center', paddingVertical: spacing.md, marginBottom: spacing.sm},
   extBadge: {width: 46, height: 46, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4},
   // The page itself stays white in both themes: it is the document, not the app.
