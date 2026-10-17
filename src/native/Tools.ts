@@ -156,7 +156,7 @@ export const AudioPreview = (N.AudioPreview ?? missing('AudioPreview')) as Audio
 export const onPreviewPosition = (fn: (p: {positionMs: number; playing: boolean}) => void) => {
   if (!N.AudioPreview) return () => {};
   const emitter = new NativeEventEmitter(N.AudioPreview);
-  const sub = emitter.addListener('previewPosition', fn);
+  const sub = emitter.addListener('previewPosition', p => fn(p as unknown as {positionMs: number; playing: boolean}));
   return () => sub.remove();
 };
 
@@ -164,6 +164,6 @@ export const onPreviewPosition = (fn: (p: {positionMs: number; playing: boolean}
 export const onMediaProgress = (fn: (p: {percent: number; stage: string}) => void) => {
   if (!N.MediaTools) return () => {};
   const emitter = new NativeEventEmitter(N.MediaTools);
-  const sub = emitter.addListener('mediaProgress', fn);
+  const sub = emitter.addListener('mediaProgress', p => fn(p as unknown as {percent: number; stage: string}));
   return () => sub.remove();
 };

@@ -12,6 +12,11 @@ import Animated, {FadeInDown, useAnimatedStyle, useSharedValue, withSpring, with
 
 const APressable = Animated.createAnimatedComponent(Pressable);
 
+// Mass 1 spelled out: Reanimated 4 fills a missing mass with 4 (GentleSpringConfig),
+// which would make the dip twice as slow as it has always been.
+const PRESS_IN = {damping: 20, stiffness: 420, mass: 1} as const;
+const PRESS_OUT = {damping: 16, stiffness: 320, mass: 1} as const;
+
 interface PressableScaleProps extends Omit<PressableProps, 'style'> {
   style?: StyleProp<ViewStyle>;
   scaleTo?: number;
@@ -27,12 +32,12 @@ export function PressableScale({style, scaleTo = 0.97, children, onPressIn, onPr
       {...rest}
       accessibilityRole={rest.accessibilityRole ?? 'button'}
       onPressIn={e => {
-        s.value = withSpring(scaleTo, {damping: 20, stiffness: 420});
+        s.value = withSpring(scaleTo, PRESS_IN);
         o.value = withTiming(0.92, {duration: 90});
         onPressIn?.(e);
       }}
       onPressOut={e => {
-        s.value = withSpring(1, {damping: 16, stiffness: 320});
+        s.value = withSpring(1, PRESS_OUT);
         o.value = withTiming(1, {duration: 160});
         onPressOut?.(e);
       }}

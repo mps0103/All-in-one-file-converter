@@ -61,7 +61,7 @@ export function ResultScreen({route, navigation}: Props) {
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         <View style={styles.hero}>
           <Animated.View style={[styles.ring, {backgroundColor: t.positive}, ringStyle]} />
-          <Animated.View entering={ZoomIn.springify().damping(12)} style={[styles.tick, {backgroundColor: t.positive, shadowColor: t.positive}]}>
+          <Animated.View entering={ZoomIn.springify().damping(12).mass(1).stiffness(100)} style={[styles.tick, {backgroundColor: t.positive, shadowColor: t.positive}]}>
             <Icon name={result.info ? 'info' : 'check'} color="#fff" size={46} strokeWidth={3} />
           </Animated.View>
         </View>

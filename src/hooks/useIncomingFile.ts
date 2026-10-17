@@ -20,7 +20,7 @@ export const useIncomingFile = (ready: boolean) => {
     if (!ready) return;
     let alive = true;
 
-    const handle = async (url: string | null) => {
+    const handle = async (url: string | null | undefined) => {
       if (!url || !alive) return;
       let file: PickedFile;
       try {

@@ -15,9 +15,7 @@ const ICONS: Record<string, IconName> = {Home: 'home', Files: 'files', Premium: 
  * GentleSpringConfig — mass 4 in particular. Reanimated 3 fills them with mass 1,
  * which made the same two numbers run twice as fast here, with less overshoot.
  *
- * Reanimated 4 ends a spring by energy (energyThreshold 6e-9 of the start);
- * Reanimated 3 has no such setting, so the equivalent rest thresholds for a
- * one-tab move (~0.02 px left over, ~0.2 px/s) are given instead.
+ * The spring ends by energy (Reanimated 4's default energyThreshold, as in Market IQ).
  */
 const INDICATOR_SPRING = {
   damping: 20,
@@ -25,8 +23,6 @@ const INDICATOR_SPRING = {
   mass: 4,
   velocity: 0,
   overshootClamping: false,
-  restDisplacementThreshold: 0.02,
-  restSpeedThreshold: 0.2,
 } as const;
 
 /** Market IQ's tab bar: the indicator springs under the active tab. */

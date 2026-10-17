@@ -43,7 +43,8 @@ export function Screen({children, style, bottom = false}: {children: React.React
   const insets = useSafeAreaInsets();
   return (
     <View style={[{flex: 1, backgroundColor: t.bg, paddingTop: insets.top, paddingBottom: bottom ? insets.bottom : 0}, style]}>
-      <StatusBar barStyle={t.isDark ? 'light-content' : 'dark-content'} backgroundColor="transparent" translucent />
+      {/* Transparent bars come from enableEdgeToEdge in MainActivity; only the icon colour is set here. */}
+      <StatusBar barStyle={t.isDark ? 'light-content' : 'dark-content'} />
       {children}
     </View>
   );
@@ -551,7 +552,7 @@ const THUMB = 26;
 function useTrack() {
   const [w, setW] = useState(0);
   const [x0, setX0] = useState(0);
-  const ref = useRef<View>(null);
+  const ref = useRef<React.ComponentRef<typeof View>>(null);
   const measure = () => ref.current?.measureInWindow((x, _y, width) => {
     setX0(x + THUMB / 2);
     setW(Math.max(0, width - THUMB));

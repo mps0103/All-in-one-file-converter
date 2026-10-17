@@ -219,7 +219,7 @@ class BillingModule(private val ctx: ReactApplicationContext) : ReactContextBase
     @ReactMethod
     fun purchase(productId: String, offerToken: String, promise: Promise) {
         val live = client ?: return promise.reject("no_connection", "Billing is not connected.")
-        val activity = currentActivity ?: return promise.reject("no_activity", "App is not in the foreground.")
+        val activity = reactApplicationContext.currentActivity ?: return promise.reject("no_activity", "App is not in the foreground.")
         val product = details[productId]
             ?: return promise.reject("no_product", "That plan is not available right now.")
 

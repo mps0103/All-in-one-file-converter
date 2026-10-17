@@ -1,5 +1,5 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
-import {InteractionManager, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
+import {Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import Animated, {FadeOut, LinearTransition} from 'react-native-reanimated';
 
 import {Icon, type IconName} from '@/components/Icon';
@@ -79,9 +79,10 @@ function useProgressiveCount(total: number) {
       setCount(Math.min(done, FIRST_SCREEN_ROWS));
       if (done < FIRST_SCREEN_ROWS) frame = requestAnimationFrame(step);
     };
-    // runAfterInteractions alone does not wait: neither the Reanimated spring nor
-    // the tab shift registers as an interaction. It still lets any touch finish first.
-    const task = InteractionManager.runAfterInteractions(() => {
+    // An idle callback alone does not wait for the tab to settle: neither the
+    // Reanimated spring nor the tab shift keeps the JS thread busy. It still lets any
+    // touch finish first. (React Native 0.87 removed InteractionManager, which this was.)
+    const idle = requestIdleCallback(() => {
       timer = setTimeout(() => (frame = requestAnimationFrame(step)), FIRST_ROWS_AFTER_MS);
     });
     const rest = setTimeout(() => {
@@ -89,7 +90,7 @@ function useProgressiveCount(total: number) {
       setCount(Infinity);
     }, REST_AFTER_MS);
     return () => {
-      task.cancel();
+      cancelIdleCallback(idle);
       if (timer) clearTimeout(timer);
       clearTimeout(rest);
       cancelAnimationFrame(frame);

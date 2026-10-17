@@ -127,7 +127,7 @@ export const ArchiveBridge: ArchiveBridgeType =
 /** Fires while a large archive is being unpacked, so the ring keeps moving. */
 export const onArchiveProgress = (fn: (p: ArchiveProgress) => void) => {
   const emitter = new NativeEventEmitter(NativeModules.ArchiveBridge);
-  const sub = emitter.addListener('archiveProgress', fn);
+  const sub = emitter.addListener('archiveProgress', p => fn(p as unknown as ArchiveProgress));
   return () => sub.remove();
 };
 

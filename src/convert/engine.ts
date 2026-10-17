@@ -157,7 +157,7 @@ const wordToPdf = async (file: PickedFile, p: Progress): Promise<ConvertResult> 
   const bytes = b64ToBytes(await FileBridge.readBase64(file.uri));
   p(45, 'Laying out the pages');
   const {value: html, messages} = await mammoth.convertToHtml({
-    arrayBuffer: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    arrayBuffer: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
   });
   const pdf = await htmlToPdfBase64(printableDocument(html, stripExtension(file.name)), file.name);
   p(88, 'Saving to Downloads');
@@ -251,7 +251,7 @@ const wordToText = async (file: PickedFile, p: Progress): Promise<ConvertResult>
   p(30, 'Reading the document');
   const bytes = b64ToBytes(await FileBridge.readBase64(file.uri));
   const {value} = await mammoth.extractRawText({
-    arrayBuffer: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    arrayBuffer: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
   });
   p(80, 'Saving to Downloads');
   return {files: [await save(textToB64(value), file.name, 'txt')]};

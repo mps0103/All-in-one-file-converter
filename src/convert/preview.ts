@@ -198,7 +198,7 @@ const screenDocument = (body: string) => `<!DOCTYPE html>
 const wordPreview = async (file: PickedFile) => {
   const bytes = b64ToBytes(await FileBridge.readBase64(file.uri));
   const {value, messages} = await mammoth.convertToHtml({
-    arrayBuffer: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    arrayBuffer: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
   });
   const dropped = messages.filter(m => m.type === 'warning').length;
   return {

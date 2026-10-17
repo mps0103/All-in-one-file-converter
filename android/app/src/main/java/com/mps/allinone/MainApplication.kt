@@ -10,34 +10,24 @@ import com.facebook.imagepipeline.core.ImagePipelineConfig
 import com.facebook.react.PackageList
 import com.facebook.react.ReactApplication
 import com.facebook.react.ReactHost
-import com.facebook.react.ReactNativeHost
-import com.facebook.react.ReactPackage
+import com.facebook.react.ReactNativeApplicationEntryPoint.loadReactNative
 import com.facebook.react.bridge.Arguments
-import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.load
 import com.facebook.react.defaults.DefaultReactHost.getDefaultReactHost
-import com.facebook.react.defaults.DefaultReactNativeHost
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import com.facebook.react.shell.MainPackageConfig
-import com.facebook.react.soloader.OpenSourceMergedSoMapping
-import com.facebook.soloader.SoLoader
 import java.util.concurrent.TimeUnit
 
 class MainApplication : Application(), ReactApplication {
 
-    override val reactNativeHost: ReactNativeHost =
-        object : DefaultReactNativeHost(this) {
-            override fun getPackages(): List<ReactPackage> =
-                PackageList(this@MainApplication, MainPackageConfig(imagePipelineConfig())).packages.apply {
+    override val reactHost: ReactHost by lazy {
+        getDefaultReactHost(
+            context = applicationContext,
+            packageList =
+                PackageList(this, MainPackageConfig(imagePipelineConfig())).packages.apply {
                     add(FileBridgePackage())
-                }
-
-            override fun getJSMainModuleName(): String = "index"
-
-            override fun getUseDeveloperSupport(): Boolean = BuildConfig.DEBUG
-
-            override val isNewArchEnabled: Boolean = BuildConfig.IS_NEW_ARCHITECTURE_ENABLED
-            override val isHermesEnabled: Boolean = BuildConfig.IS_HERMES_ENABLED
-        }
+                },
+        )
+    }
 
     /**
      * React Native's own image setup, with a smaller picture cache. Fresco's default
@@ -62,13 +52,9 @@ class MainApplication : Application(), ReactApplication {
             })
             .build()
 
-    override val reactHost: ReactHost
-        get() = getDefaultReactHost(applicationContext, reactNativeHost)
-
     override fun onCreate() {
         super.onCreate()
-        SoLoader.init(this, OpenSourceMergedSoMapping)
-        if (BuildConfig.IS_NEW_ARCHITECTURE_ENABLED) load()
+        loadReactNative(this)
     }
 
     /**
@@ -86,11 +72,9 @@ class MainApplication : Application(), ReactApplication {
         } catch (_: Exception) {
         }
         try {
-            if (!reactNativeHost.hasInstance()) return
-            val context = reactNativeHost.reactInstanceManager.currentReactContext ?: return
-            if (!context.hasActiveReactInstance()) return
-            context.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-                .emit("memoryTrim", Arguments.createMap().apply { putInt("level", level) })
+            reactHost.currentReactContext
+                ?.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                ?.emit("memoryTrim", Arguments.createMap().apply { putInt("level", level) })
         } catch (_: Exception) {
         }
     }

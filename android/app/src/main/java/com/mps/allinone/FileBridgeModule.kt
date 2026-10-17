@@ -63,7 +63,7 @@ class FileBridgeModule(private val ctx: ReactApplicationContext) :
     fun pickFiles(mimeTypes: ReadableArray, promise: Promise) = startPick(mimeTypes, true, promise)
 
     private fun startPick(mimeTypes: ReadableArray, multiple: Boolean, promise: Promise) {
-        val activity = currentActivity ?: return promise.reject("no_activity", "App is not in the foreground.")
+        val activity = reactApplicationContext.currentActivity ?: return promise.reject("no_activity", "App is not in the foreground.")
         pickPromise = promise
         pickMultiple = multiple
         val types = Array(mimeTypes.size()) { mimeTypes.getString(it) }
@@ -85,7 +85,7 @@ class FileBridgeModule(private val ctx: ReactApplicationContext) :
         }
     }
 
-    override fun onActivityResult(a: Activity?, requestCode: Int, resultCode: Int, data: Intent?) {
+    override fun onActivityResult(a: Activity, requestCode: Int, resultCode: Int, data: Intent?) {
         if (requestCode != PICK_REQUEST) return
         val promise = pickPromise ?: return
         val multiple = pickMultiple
@@ -123,7 +123,7 @@ class FileBridgeModule(private val ctx: ReactApplicationContext) :
         }
     }
 
-    override fun onNewIntent(intent: Intent?) = Unit
+    override fun onNewIntent(intent: Intent) = Unit
 
     /**
      * Name, size and type for a uri the app did not pick itself — the one handed over
